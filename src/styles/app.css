@@ -35,6 +35,12 @@ button {
   cursor: pointer;
 }
 
+button:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .filter-row {
   display: grid;
   gap: 8px;
@@ -48,4 +54,16 @@ button {
 
 .placeholder-tip {
   color: #6b7280;
+}
+
+.hint-text {
+  margin: 0;
+  color: #4b5563;
+  font-size: 13px;
+}
+
+.error-text {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 13px;
 }

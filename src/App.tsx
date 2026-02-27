@@ -13,6 +13,7 @@ function App() {
   const [filters, setFilters] = useState<FilterState>({ tripId: '', dayId: '', segmentId: '' })
 
   useEffect(() => {
+    // 数据变化后自动持久化：新增旅程/日期/路段后刷新页面仍可恢复。
     saveTripReview(tripReview)
   }, [tripReview])
 
@@ -25,6 +26,18 @@ function App() {
     }),
     [],
   )
+
+  const filterContext = useMemo(() => {
+    const selectedTrip = tripReview.trips.find((trip) => trip.id === filters.tripId)
+    const selectedDay = selectedTrip?.days.find((day) => day.id === filters.dayId)
+    const selectedSegment = selectedDay?.routeSegments.find((segment) => segment.id === filters.segmentId)
+
+    return {
+      tripName: selectedTrip?.title ?? '全部旅程',
+      dayDate: selectedDay?.date ?? '全部日期',
+      segmentName: selectedSegment?.name ?? '全部路段',
+    }
+  }, [tripReview.trips, filters.tripId, filters.dayId, filters.segmentId])
 
   const addTrip = (payload: { title: string; startDate: string; endDate: string }) => {
     setTripReview((prev) => ({
@@ -104,11 +117,12 @@ function App() {
 
       <FilterPanel trips={tripReview.trips} filters={filters} onChange={setFilters} />
 
-      <MapPlaceholder filteredSegments={filteredSegments} summary={summary} />
+      <MapPlaceholder filteredSegments={filteredSegments} summary={summary} filterContext={filterContext} />
     </main>
   )
 }
 
+// 简易 ID 生成器：用于前端原型阶段快速创建唯一标识。
 function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`
 }

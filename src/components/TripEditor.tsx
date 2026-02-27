@@ -17,14 +17,16 @@ interface TripEditorProps {
   }) => void
 }
 
-// 旅程编辑区：集中提供“新增旅程 / 新增日期 / 新增路段”三个最小表单。
+// 旅程编辑区：集中提供“新增旅程 / 新增日期 / 新增路段”三个最小表单，并处理基础校验与提示。
 function TripEditor({ trips, onAddTrip, onAddDay, onAddSegment }: TripEditorProps) {
   const [tripTitle, setTripTitle] = useState('')
   const [tripStartDate, setTripStartDate] = useState('')
   const [tripEndDate, setTripEndDate] = useState('')
+  const [tripError, setTripError] = useState('')
 
   const [dayTripId, setDayTripId] = useState('')
   const [dayDate, setDayDate] = useState('')
+  const [dayError, setDayError] = useState('')
 
   const [segmentTripId, setSegmentTripId] = useState('')
   const [segmentDayId, setSegmentDayId] = useState('')
@@ -33,6 +35,7 @@ function TripEditor({ trips, onAddTrip, onAddDay, onAddSegment }: TripEditorProp
   const [segmentEndPoint, setSegmentEndPoint] = useState('')
   const [segmentViaPointsText, setSegmentViaPointsText] = useState('')
   const [segmentPreference, setSegmentPreference] = useState<RoutePreference>('HIGHWAY_FIRST')
+  const [segmentError, setSegmentError] = useState('')
 
   const daysForSelectedTrip = useMemo(() => {
     return trips.find((trip) => trip.id === segmentTripId)?.days ?? []
@@ -40,8 +43,14 @@ function TripEditor({ trips, onAddTrip, onAddDay, onAddSegment }: TripEditorProp
 
   const handleAddTrip = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!tripTitle || !tripStartDate || !tripEndDate) return
-    onAddTrip({ title: tripTitle, startDate: tripStartDate, endDate: tripEndDate })
+    setTripError('')
+
+    if (!tripTitle.trim() || !tripStartDate || !tripEndDate) {
+      setTripError('请填写旅程标题、开始日期、结束日期。')
+      return
+    }
+
+    onAddTrip({ title: tripTitle.trim(), startDate: tripStartDate, endDate: tripEndDate })
     setTripTitle('')
     setTripStartDate('')
     setTripEndDate('')
@@ -49,22 +58,48 @@ function TripEditor({ trips, onAddTrip, onAddDay, onAddSegment }: TripEditorProp
 
   const handleAddDay = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!dayTripId || !dayDate) return
+    setDayError('')
+
+    if (!dayTripId) {
+      setDayError('请先选择一个旅程。')
+      return
+    }
+
+    if (!dayDate) {
+      setDayError('请填写日期（YYYY-MM-DD）。')
+      return
+    }
+
     onAddDay({ tripId: dayTripId, date: dayDate })
     setDayDate('')
   }
 
   const handleAddSegment = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!segmentTripId || !segmentDayId || !segmentName || !segmentStartPoint || !segmentEndPoint) return
+    setSegmentError('')
+
+    if (!segmentTripId) {
+      setSegmentError('请先选择旅程。')
+      return
+    }
+
+    if (!segmentDayId) {
+      setSegmentError('请先选择日期。')
+      return
+    }
+
+    if (!segmentName.trim() || !segmentStartPoint.trim() || !segmentEndPoint.trim()) {
+      setSegmentError('请填写路段名称、起点、终点。')
+      return
+    }
 
     onAddSegment({
       tripId: segmentTripId,
       dayId: segmentDayId,
-      name: segmentName,
-      startPoint: segmentStartPoint,
-      endPoint: segmentEndPoint,
-      viaPointsText: segmentViaPointsText,
+      name: segmentName.trim(),
+      startPoint: segmentStartPoint.trim(),
+      endPoint: segmentEndPoint.trim(),
+      viaPointsText: segmentViaPointsText.trim(),
       preference: segmentPreference,
     })
 
@@ -85,6 +120,7 @@ function TripEditor({ trips, onAddTrip, onAddDay, onAddSegment }: TripEditorProp
         <input type="date" value={tripStartDate} onChange={(e) => setTripStartDate(e.target.value)} />
         <input type="date" value={tripEndDate} onChange={(e) => setTripEndDate(e.target.value)} />
         <button type="submit">添加旅程</button>
+        {tripError && <p className="error-text">{tripError}</p>}
       </form>
 
       <form className="form-block" onSubmit={handleAddDay}>
@@ -98,7 +134,11 @@ function TripEditor({ trips, onAddTrip, onAddDay, onAddSegment }: TripEditorProp
           ))}
         </select>
         <input type="date" value={dayDate} onChange={(e) => setDayDate(e.target.value)} />
-        <button type="submit">添加日期</button>
+        <button type="submit" disabled={!dayTripId}>
+          添加日期
+        </button>
+        {!dayTripId && <p className="hint-text">请先选择旅程，再添加日期。</p>}
+        {dayError && <p className="error-text">{dayError}</p>}
       </form>
 
       <form className="form-block" onSubmit={handleAddSegment}>
@@ -119,7 +159,11 @@ function TripEditor({ trips, onAddTrip, onAddDay, onAddSegment }: TripEditorProp
           ))}
         </select>
 
-        <select value={segmentDayId} onChange={(e) => setSegmentDayId(e.target.value)}>
+        <select
+          value={segmentDayId}
+          onChange={(e) => setSegmentDayId(e.target.value)}
+          disabled={!segmentTripId}
+        >
           <option value="">请选择日期</option>
           {daysForSelectedTrip.map((day) => (
             <option key={day.id} value={day.id}>
@@ -151,7 +195,12 @@ function TripEditor({ trips, onAddTrip, onAddDay, onAddSegment }: TripEditorProp
             </option>
           ))}
         </select>
-        <button type="submit">添加路段</button>
+
+        <button type="submit" disabled={!segmentTripId || !segmentDayId}>
+          添加路段
+        </button>
+        {(!segmentTripId || !segmentDayId) && <p className="hint-text">请先选择旅程与日期。</p>}
+        {segmentError && <p className="error-text">{segmentError}</p>}
       </form>
     </section>
   )
