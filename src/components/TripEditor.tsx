@@ -1,7 +1,8 @@
 import { useMemo, useState, type FormEvent } from 'react'
-import type { RoutePreference, Trip } from '../types/trip'
+import type { CoordPoint, RoutePreference, Trip } from '../types/trip'
 import { routePreferenceOptions } from '../utils/routePreference'
 import { eachDayInRange } from '../utils/date'
+import PlaceAutocomplete from './PlaceAutocomplete'
 
 interface TripEditorProps {
   trips: Trip[]
@@ -14,6 +15,10 @@ interface TripEditorProps {
     endPoint: string
     viaPointsText: string
     preference: RoutePreference
+    startCoord?: CoordPoint
+    endCoord?: CoordPoint
+    startPlaceId?: string
+    endPlaceId?: string
   }) => void
 }
 
@@ -29,6 +34,10 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
   const [segmentName, setSegmentName] = useState('')
   const [segmentStartPoint, setSegmentStartPoint] = useState('')
   const [segmentEndPoint, setSegmentEndPoint] = useState('')
+  const [segmentStartCoord, setSegmentStartCoord] = useState<CoordPoint | undefined>(undefined)
+  const [segmentEndCoord, setSegmentEndCoord] = useState<CoordPoint | undefined>(undefined)
+  const [segmentStartPlaceId, setSegmentStartPlaceId] = useState<string | undefined>(undefined)
+  const [segmentEndPlaceId, setSegmentEndPlaceId] = useState<string | undefined>(undefined)
   const [segmentViaPointsText, setSegmentViaPointsText] = useState('')
   const [segmentPreference, setSegmentPreference] = useState<RoutePreference>('HIGHWAY_FIRST')
   const [segmentError, setSegmentError] = useState('')
@@ -86,11 +95,19 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
       endPoint: segmentEndPoint.trim(),
       viaPointsText: segmentViaPointsText.trim(),
       preference: segmentPreference,
+      startCoord: segmentStartCoord,
+      endCoord: segmentEndCoord,
+      startPlaceId: segmentStartPlaceId,
+      endPlaceId: segmentEndPlaceId,
     })
 
     setSegmentName('')
     setSegmentStartPoint('')
     setSegmentEndPoint('')
+    setSegmentStartCoord(undefined)
+    setSegmentEndCoord(undefined)
+    setSegmentStartPlaceId(undefined)
+    setSegmentEndPlaceId(undefined)
     setSegmentViaPointsText('')
     setSegmentPreference('HIGHWAY_FIRST')
   }
@@ -140,12 +157,39 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
         </select>
 
         <input value={segmentName} onChange={(e) => setSegmentName(e.target.value)} placeholder="路段名称" />
-        <input
-          value={segmentStartPoint}
-          onChange={(e) => setSegmentStartPoint(e.target.value)}
-          placeholder="起点"
+
+        <PlaceAutocomplete
+          valueText={segmentStartPoint}
+          onValueTextChange={(text) => {
+            setSegmentStartPoint(text)
+            setSegmentStartCoord(undefined)
+            setSegmentStartPlaceId(undefined)
+          }}
+          onSelect={(result) => {
+            setSegmentStartPoint(result.label)
+            setSegmentStartCoord({ lat: result.lat, lon: result.lon })
+            setSegmentStartPlaceId(result.placeId)
+          }}
+          placeholder="起点（输入后从候选中选择）"
+          disabled={!segmentTripId}
         />
-        <input value={segmentEndPoint} onChange={(e) => setSegmentEndPoint(e.target.value)} placeholder="终点" />
+
+        <PlaceAutocomplete
+          valueText={segmentEndPoint}
+          onValueTextChange={(text) => {
+            setSegmentEndPoint(text)
+            setSegmentEndCoord(undefined)
+            setSegmentEndPlaceId(undefined)
+          }}
+          onSelect={(result) => {
+            setSegmentEndPoint(result.label)
+            setSegmentEndCoord({ lat: result.lat, lon: result.lon })
+            setSegmentEndPlaceId(result.placeId)
+          }}
+          placeholder="终点（输入后从候选中选择）"
+          disabled={!segmentTripId}
+        />
+
         <input
           value={segmentViaPointsText}
           onChange={(e) => setSegmentViaPointsText(e.target.value)}
@@ -167,6 +211,9 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
           添加路段
         </button>
         {!segmentTripId && <p className="hint-text">请先选择旅程</p>}
+        {(segmentStartPoint && !segmentStartCoord) || (segmentEndPoint && !segmentEndCoord) ? (
+          <p className="hint-text">建议从候选中选择起终点，以提高定位精度。</p>
+        ) : null}
         {segmentError && <p className="error-text">{segmentError}</p>}
       </form>
     </section>

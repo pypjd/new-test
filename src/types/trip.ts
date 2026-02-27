@@ -2,6 +2,11 @@
 
 export type RoutePreference = 'HIGHWAY_FIRST' | 'LESS_TOLL' | 'NORMAL_ROAD_FIRST' | 'SHORTEST_TIME'
 
+export interface CoordPoint {
+  lat: number
+  lon: number
+}
+
 export interface RouteSegment {
   id: string
   name: string
@@ -9,6 +14,10 @@ export interface RouteSegment {
   endPoint: string
   viaPointsText: string
   preference: RoutePreference
+  startCoord?: CoordPoint
+  endCoord?: CoordPoint
+  startPlaceId?: string
+  endPlaceId?: string
 }
 
 export interface TripDay {

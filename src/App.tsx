@@ -5,7 +5,7 @@ import MapPanel from './components/MapPanel'
 import TripEditor from './components/TripEditor'
 import { useFilteredSegments } from './hooks/useFilteredSegments'
 import { loadTripReview, saveTripReview } from './services/tripStorage'
-import type { FilterState, RoutePreference, RouteSummary, TripReview } from './types/trip'
+import type { CoordPoint, FilterState, RoutePreference, RouteSummary, TripReview } from './types/trip'
 import './styles/app.css'
 
 // 根组件：组装数据状态、编辑动作、筛选状态与地图占位展示。
@@ -63,6 +63,10 @@ function App() {
     endPoint: string
     viaPointsText: string
     preference: RoutePreference
+    startCoord?: CoordPoint
+    endCoord?: CoordPoint
+    startPlaceId?: string
+    endPlaceId?: string
   }) => {
     setTripReview((prev) => ({
       trips: prev.trips.map((trip) => {
@@ -76,6 +80,10 @@ function App() {
           endPoint: payload.endPoint,
           viaPointsText: payload.viaPointsText,
           preference: payload.preference,
+          startCoord: payload.startCoord,
+          endCoord: payload.endCoord,
+          startPlaceId: payload.startPlaceId,
+          endPlaceId: payload.endPlaceId,
         }
 
         if (!matchedDay) {

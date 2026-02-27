@@ -80,7 +80,7 @@ function splitViaPoints(viaPointsText: string): string[] {
     .filter(Boolean)
 }
 
-// 地图轨迹面板：根据当前筛选路段做地理编码与 OSRM 路网轨迹绘制。
+// 地图轨迹面板：优先使用已保存坐标，缺失时再 geocode，并结合 OSRM 路网轨迹绘制。
 function MapPanel({ filteredSegments, filters }: MapPanelProps) {
   const [tracks, setTracks] = useState<SegmentTrack[]>([])
   const [loading, setLoading] = useState(false)
@@ -102,11 +102,18 @@ function MapPanel({ filteredSegments, filters }: MapPanelProps) {
       setLoading(true)
       setMessage('正在加载轨迹点位...')
 
-      const placeItems = filteredSegments.flatMap((segment) => [
-        { place: normalizePlaceName(segment.startPoint), context: segment.name },
-        ...splitViaPoints(segment.viaPointsText).map((place) => ({ place, context: segment.name })),
-        { place: normalizePlaceName(segment.endPoint), context: segment.name },
-      ])
+      const placeItems = filteredSegments.flatMap((segment) => {
+        const viaItems = splitViaPoints(segment.viaPointsText).map((place) => ({
+          place,
+          context: segment.name,
+        }))
+
+        return [
+          ...(segment.startCoord ? [] : [{ place: normalizePlaceName(segment.startPoint), context: segment.name }]),
+          ...viaItems,
+          ...(segment.endCoord ? [] : [{ place: normalizePlaceName(segment.endPoint), context: segment.name }]),
+        ]
+      })
 
       const geoMap = await geocodePlacesSerial(placeItems)
       if (!active) return
@@ -117,31 +124,53 @@ function MapPanel({ filteredSegments, filters }: MapPanelProps) {
       const nextTracks: SegmentTrack[] = []
 
       for (const segment of filteredSegments) {
-        const orderedNames = [
-          normalizePlaceName(segment.startPoint),
-          ...splitViaPoints(segment.viaPointsText),
-          normalizePlaceName(segment.endPoint),
-        ]
+        const points: SegmentTrack['points'] = []
 
-        const points = orderedNames
-          .map((name, index) => {
-            const geo = geoMap[name]
-            if (!geo) return null
-
-            let type: PointKind = 'via'
-            if (index === 0) type = 'start'
-            if (index === orderedNames.length - 1) type = 'end'
-
-            return {
-              name,
-              lat: geo.lat,
-              lon: geo.lon,
-              type,
-            }
+        const startName = normalizePlaceName(segment.startPoint)
+        if (segment.startCoord) {
+          points.push({
+            name: startName,
+            lat: segment.startCoord.lat,
+            lon: segment.startCoord.lon,
+            type: 'start',
           })
-          .filter((item): item is NonNullable<typeof item> => Boolean(item))
+        } else if (geoMap[startName]) {
+          points.push({
+            name: startName,
+            lat: geoMap[startName].lat,
+            lon: geoMap[startName].lon,
+            type: 'start',
+          })
+        }
 
-        if (points.length < orderedNames.length) {
+        for (const viaName of splitViaPoints(segment.viaPointsText)) {
+          const geo = geoMap[viaName]
+          if (geo) {
+            points.push({ name: viaName, lat: geo.lat, lon: geo.lon, type: 'via' })
+          } else {
+            hasSkippedPoint = true
+          }
+        }
+
+        const endName = normalizePlaceName(segment.endPoint)
+        if (segment.endCoord) {
+          points.push({
+            name: endName,
+            lat: segment.endCoord.lat,
+            lon: segment.endCoord.lon,
+            type: 'end',
+          })
+        } else if (geoMap[endName]) {
+          points.push({
+            name: endName,
+            lat: geoMap[endName].lat,
+            lon: geoMap[endName].lon,
+            type: 'end',
+          })
+        }
+
+        const shouldHavePoints = 2 + splitViaPoints(segment.viaPointsText).length
+        if (points.length < shouldHavePoints) {
           hasSkippedPoint = true
         }
 
@@ -195,7 +224,7 @@ function MapPanel({ filteredSegments, filters }: MapPanelProps) {
   }, [filteredSegments, shouldPromptSelectMore])
 
   const allLatLng = useMemo(
-    () => tracks.flatMap((track) => track.line.length ? track.line : track.points.map((p) => [p.lat, p.lon])),
+    () => tracks.flatMap((track) => (track.line.length ? track.line : track.points.map((p) => [p.lat, p.lon]))),
     [tracks],
   )
 
