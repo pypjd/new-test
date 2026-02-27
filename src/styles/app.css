@@ -1,0 +1,51 @@
+/* 页面级样式：三大区域排版与基础表单样式，强调清晰可用。 */
+.app-shell {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.card-section {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.form-block {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.form-block:last-child {
+  margin-bottom: 0;
+}
+
+input,
+select,
+button {
+  padding: 8px;
+  font-size: 14px;
+}
+
+button {
+  cursor: pointer;
+}
+
+.filter-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.filter-row label {
+  display: grid;
+  gap: 4px;
+}
+
+.placeholder-tip {
+  color: #6b7280;
+}
