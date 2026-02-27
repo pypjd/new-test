@@ -54,28 +54,9 @@ function App() {
     }))
   }
 
-  const addDay = (payload: { tripId: string; date: string }) => {
-    setTripReview((prev) => ({
-      trips: prev.trips.map((trip) => {
-        if (trip.id !== payload.tripId) return trip
-        return {
-          ...trip,
-          days: [
-            ...trip.days,
-            {
-              id: createId('day'),
-              date: payload.date,
-              routeSegments: [],
-            },
-          ],
-        }
-      }),
-    }))
-  }
-
   const addSegment = (payload: {
     tripId: string
-    dayId: string
+    dayDate: string
     name: string
     startPoint: string
     endPoint: string
@@ -85,23 +66,38 @@ function App() {
     setTripReview((prev) => ({
       trips: prev.trips.map((trip) => {
         if (trip.id !== payload.tripId) return trip
+
+        const matchedDay = trip.days.find((day) => day.date === payload.dayDate)
+        const nextSegment = {
+          id: createId('segment'),
+          name: payload.name,
+          startPoint: payload.startPoint,
+          endPoint: payload.endPoint,
+          viaPointsText: payload.viaPointsText,
+          preference: payload.preference,
+        }
+
+        if (!matchedDay) {
+          return {
+            ...trip,
+            days: [
+              ...trip.days,
+              {
+                id: payload.dayDate,
+                date: payload.dayDate,
+                routeSegments: [nextSegment],
+              },
+            ],
+          }
+        }
+
         return {
           ...trip,
           days: trip.days.map((day) => {
-            if (day.id !== payload.dayId) return day
+            if (day.date !== payload.dayDate) return day
             return {
               ...day,
-              routeSegments: [
-                ...day.routeSegments,
-                {
-                  id: createId('segment'),
-                  name: payload.name,
-                  startPoint: payload.startPoint,
-                  endPoint: payload.endPoint,
-                  viaPointsText: payload.viaPointsText,
-                  preference: payload.preference,
-                },
-              ],
+              routeSegments: [...day.routeSegments, nextSegment],
             }
           }),
         }
@@ -113,7 +109,7 @@ function App() {
     <main className="app-shell">
       <h1>自驾旅行复盘工具（开发中）</h1>
 
-      <TripEditor trips={tripReview.trips} onAddTrip={addTrip} onAddDay={addDay} onAddSegment={addSegment} />
+      <TripEditor trips={tripReview.trips} onAddTrip={addTrip} onAddSegment={addSegment} />
 
       <FilterPanel trips={tripReview.trips} filters={filters} onChange={setFilters} />
 
