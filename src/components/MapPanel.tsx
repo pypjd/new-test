@@ -1,28 +1,25 @@
 import { useEffect, useMemo, useState } from 'react'
-import {
-  MapContainer,
-  Marker,
-  Popup,
-  Polyline,
-  TileLayer,
-  useMap,
-} from 'react-leaflet'
-import L, { type LatLngExpression } from 'leaflet'
+import { MapContainer, Marker, Popup, Polyline, TileLayer, useMap } from 'react-leaflet'
+import L, { type DivIcon, type LatLngExpression } from 'leaflet'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 import type { FilterState, RouteSegment } from '../types/trip'
 import { geocodePlacesSerial, normalizePlaceName } from '../utils/geocode'
+import { fetchRoadPolyline } from '../utils/osrm'
 
 interface MapPanelProps {
   filteredSegments: RouteSegment[]
   filters: FilterState
 }
 
+type PointKind = 'start' | 'via' | 'end'
+
 interface SegmentTrack {
   segmentId: string
   segmentName: string
-  points: Array<{ name: string; lat: number; lon: number; type: 'start' | 'via' | 'end' }>
+  points: Array<{ name: string; lat: number; lon: number; type: PointKind }>
+  line: LatLngExpression[]
 }
 
 interface ViewportControllerProps {
@@ -37,6 +34,27 @@ L.Icon.Default.mergeOptions({
   iconUrl: markerIcon,
   shadowUrl: markerShadow,
 })
+
+const pointIcons: Record<PointKind, DivIcon> = {
+  start: L.divIcon({
+    className: 'custom-point-icon-wrapper',
+    html: '<div class="custom-point-icon start">S</div>',
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  }),
+  end: L.divIcon({
+    className: 'custom-point-icon-wrapper',
+    html: '<div class="custom-point-icon end">E</div>',
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  }),
+  via: L.divIcon({
+    className: 'custom-point-icon-wrapper',
+    html: '<div class="custom-point-icon via">•</div>',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  }),
+}
 
 function ViewportController({ points }: ViewportControllerProps) {
   const map = useMap()
@@ -62,7 +80,7 @@ function splitViaPoints(viaPointsText: string): string[] {
     .filter(Boolean)
 }
 
-// 地图轨迹面板：根据当前筛选路段做地理编码并绘制 marker/polyline。
+// 地图轨迹面板：根据当前筛选路段做地理编码与 OSRM 路网轨迹绘制。
 function MapPanel({ filteredSegments, filters }: MapPanelProps) {
   const [tracks, setTracks] = useState<SegmentTrack[]>([])
   const [loading, setLoading] = useState(false)
@@ -84,61 +102,89 @@ function MapPanel({ filteredSegments, filters }: MapPanelProps) {
       setLoading(true)
       setMessage('正在加载轨迹点位...')
 
-      const placeNames = filteredSegments.flatMap((segment) => [
-        normalizePlaceName(segment.startPoint),
-        ...splitViaPoints(segment.viaPointsText),
-        normalizePlaceName(segment.endPoint),
+      const placeItems = filteredSegments.flatMap((segment) => [
+        { place: normalizePlaceName(segment.startPoint), context: segment.name },
+        ...splitViaPoints(segment.viaPointsText).map((place) => ({ place, context: segment.name })),
+        { place: normalizePlaceName(segment.endPoint), context: segment.name },
       ])
 
-      const geoMap = await geocodePlacesSerial(placeNames)
+      const geoMap = await geocodePlacesSerial(placeItems)
       if (!active) return
 
-      const nextTracks: SegmentTrack[] = filteredSegments
-        .map((segment) => {
-          const orderedNames = [
-            normalizePlaceName(segment.startPoint),
-            ...splitViaPoints(segment.viaPointsText),
-            normalizePlaceName(segment.endPoint),
-          ]
+      let hasSkippedPoint = false
+      let hasOsrmFallback = false
 
-          const points = orderedNames
-            .map((name, index) => {
-              const geo = geoMap[name]
-              if (!geo) return null
+      const nextTracks: SegmentTrack[] = []
 
-              let type: 'start' | 'via' | 'end' = 'via'
-              if (index === 0) type = 'start'
-              if (index === orderedNames.length - 1) type = 'end'
+      for (const segment of filteredSegments) {
+        const orderedNames = [
+          normalizePlaceName(segment.startPoint),
+          ...splitViaPoints(segment.viaPointsText),
+          normalizePlaceName(segment.endPoint),
+        ]
 
-              return {
-                name,
-                lat: geo.lat,
-                lon: geo.lon,
-                type,
-              }
-            })
-            .filter((item): item is NonNullable<typeof item> => Boolean(item))
+        const points = orderedNames
+          .map((name, index) => {
+            const geo = geoMap[name]
+            if (!geo) return null
 
-          return {
-            segmentId: segment.id,
-            segmentName: segment.name,
-            points,
+            let type: PointKind = 'via'
+            if (index === 0) type = 'start'
+            if (index === orderedNames.length - 1) type = 'end'
+
+            return {
+              name,
+              lat: geo.lat,
+              lon: geo.lon,
+              type,
+            }
+          })
+          .filter((item): item is NonNullable<typeof item> => Boolean(item))
+
+        if (points.length < orderedNames.length) {
+          hasSkippedPoint = true
+        }
+
+        if (!points.length) {
+          continue
+        }
+
+        let line: LatLngExpression[] = points.map((point) => [point.lat, point.lon] as LatLngExpression)
+
+        if (points.length >= 2) {
+          const osrmLine = await fetchRoadPolyline(points)
+          if (osrmLine?.length) {
+            line = osrmLine
+          } else {
+            hasOsrmFallback = true
           }
+        }
+
+        nextTracks.push({
+          segmentId: segment.id,
+          segmentName: segment.name,
+          points,
+          line,
         })
-        .filter((track) => track.points.length >= 1)
+      }
+
+      if (!active) return
 
       setTracks(nextTracks)
       setLoading(false)
 
+      const messageParts: string[] = []
       if (!nextTracks.length) {
-        setMessage('未能解析有效地点，请检查起点/终点/途径点文本。')
-      } else {
-        const hasSkipped = nextTracks.some((track, index) => {
-          const expected = 2 + splitViaPoints(filteredSegments[index].viaPointsText).length
-          return track.points.length < expected
-        })
-        setMessage(hasSkipped ? '部分地点解析失败，已跳过不可用点位。' : '')
+        messageParts.push('未能解析有效地点，请检查起点/终点/途径点文本。')
       }
+      if (hasSkippedPoint) {
+        messageParts.push('部分地点解析失败，已跳过不可用点位。')
+      }
+      if (hasOsrmFallback) {
+        messageParts.push('路网轨迹生成失败，已使用直线连接。')
+      }
+
+      setMessage(messageParts.join(' '))
     }
 
     void buildTracks()
@@ -149,7 +195,7 @@ function MapPanel({ filteredSegments, filters }: MapPanelProps) {
   }, [filteredSegments, shouldPromptSelectMore])
 
   const allLatLng = useMemo(
-    () => tracks.flatMap((track) => track.points.map((point) => [point.lat, point.lon] as LatLngExpression)),
+    () => tracks.flatMap((track) => track.line.length ? track.line : track.points.map((p) => [p.lat, p.lon])),
     [tracks],
   )
 
@@ -166,17 +212,19 @@ function MapPanel({ filteredSegments, filters }: MapPanelProps) {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
 
-          {tracks.map((track) => {
-            const polylinePositions = track.points.map((point) => [point.lat, point.lon] as LatLngExpression)
-            if (polylinePositions.length < 2) return null
-            return (
-              <Polyline key={track.segmentId} positions={polylinePositions} color="#2563eb" weight={4} />
-            )
-          })}
+          {tracks.map((track) =>
+            track.line.length >= 2 ? (
+              <Polyline key={track.segmentId} positions={track.line} color="#2563eb" weight={4} />
+            ) : null,
+          )}
 
           {tracks.flatMap((track) =>
             track.points.map((point, index) => (
-              <Marker key={`${track.segmentId}-${point.name}-${index}`} position={[point.lat, point.lon]}>
+              <Marker
+                key={`${track.segmentId}-${point.name}-${index}`}
+                position={[point.lat, point.lon]}
+                icon={pointIcons[point.type]}
+              >
                 <Popup>
                   <div>
                     <strong>{track.segmentName}</strong>
