@@ -1,55 +1,30 @@
-# 自驾旅行复盘与路线重建工具（前端骨架）
+# 自驾旅行复盘工具（第1轮骨架）
 
-这是一个面向新手的 React + TypeScript + Vite 初始化项目。
+基于 React + TypeScript + Vite 的新手友好项目。
 
-## 1) 推荐初始化命令（npm）
-
-```bash
-npm create vite@latest roadtrip-retrospective-tool -- --template react-ts
-cd roadtrip-retrospective-tool
-npm install
-npm run dev
-```
-
-> 如果你想直接在当前目录创建项目：
-
-```bash
-npm create vite@latest . -- --template react-ts
-```
-
-## 2) 建议目录结构（`src`）
-
-```text
-src/
-├─ App.tsx              # 根组件（页面入口内容）
-├─ main.tsx             # 应用挂载入口
-├─ styles/
-│  ├─ global.css        # 全局样式
-│  └─ app.css           # 页面级样式
-├─ pages/               # 页面级组件（按路由/场景）
-├─ components/          # 可复用 UI 组件
-├─ services/            # 数据服务层（本地存储/API）
-├─ store/               # 全局状态（可选）
-├─ hooks/               # 自定义 Hook
-├─ utils/               # 工具函数
-└─ types/               # 类型定义
-```
-
-## 3) 当前最简骨架说明
-
-- 页面会显示标题：**自驾旅行复盘工具（开发中）**。
-- 关键文件均有注释，便于新手理解职责。
-- 已预留后续接入地图组件和本地存储的目录。
-
-## 4) 运行命令
+## 安装与运行
 
 ```bash
 npm install
 npm run dev
 ```
 
-## 5) 可选检查命令
+## 第1轮已实现能力
 
-```bash
-npm run build
-```
+- 新建旅程（标题、开始日期、结束日期）
+- 在旅程下新增日期
+- 在某个日期下新增多个路段
+- 按旅程 / 日期 / 路段筛选
+- 地图占位区展示筛选后的路段数量与名称
+- localStorage 自动保存与恢复
+- localStorage 为空时自动注入假数据
+
+## 目录说明（src）
+
+- `types/trip.ts`：核心类型定义（Trip / TripDay / RouteSegment / RouteSummary）
+- `services/mockData.ts`：假数据
+- `services/tripStorage.ts`：localStorage 读写
+- `hooks/useFilteredSegments.ts`：筛选计算逻辑
+- `components/TripEditor.tsx`：编辑区
+- `components/FilterPanel.tsx`：筛选区
+- `components/MapPlaceholder.tsx`：地图占位区
