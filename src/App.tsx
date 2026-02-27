@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import FilterPanel from './components/FilterPanel'
 import MapPlaceholder from './components/MapPlaceholder'
+import MapPanel from './components/MapPanel'
 import TripEditor from './components/TripEditor'
 import { useFilteredSegments } from './hooks/useFilteredSegments'
 import { loadTripReview, saveTripReview } from './services/tripStorage'
@@ -114,6 +115,8 @@ function App() {
       <FilterPanel trips={tripReview.trips} filters={filters} onChange={setFilters} />
 
       <MapPlaceholder filteredSegments={filteredSegments} summary={summary} filterContext={filterContext} />
+
+      <MapPanel filteredSegments={filteredSegments} filters={filters} />
     </main>
   )
 }
