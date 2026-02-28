@@ -5,11 +5,12 @@ import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 import type { CoordPoint, FilterState, RouteSegment, Waypoint } from '../types/trip'
-import { geocodePlacesSerial, normalizePlaceName } from '../utils/geocode'
-import { fetchRoadPolyline } from '../utils/osrm'
+import { planDrivingRoute, searchAmapInputTips } from '../services/amap'
 
 interface EndpointDraft {
   segmentId: string
+  startPoint: string
+  endPoint: string
   startCoord?: CoordPoint
   endCoord?: CoordPoint
 }
@@ -58,7 +59,6 @@ const defaultCenter: [number, number] = [35.8617, 104.1954]
 const CONTROL_POINT_STEP = 25
 const CONTROL_POINT_MAX = 16
 
-// 修复 Leaflet 在 Vite 下默认 marker 图标路径。
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
   iconUrl: markerIcon,
@@ -105,12 +105,10 @@ function ViewportController({ points }: ViewportControllerProps) {
 
   useEffect(() => {
     if (!points.length) return
-
     if (points.length === 1) {
       map.setView(points[0], 11)
       return
     }
-
     map.fitBounds(L.latLngBounds(points), { padding: [24, 24] })
   }, [map, points])
 
@@ -128,18 +126,21 @@ function WaypointFocusController({ waypoint }: WaypointFocusControllerProps) {
   return null
 }
 
-function splitViaPoints(viaPointsText: string): string[] {
-  return viaPointsText
-    .split(',')
-    .map((item) => normalizePlaceName(item))
-    .filter(Boolean)
-}
-
 function toLatLng(points: CoordPoint[]): LatLngExpression[] {
   return points.map((point) => [point.lat, point.lon] as LatLngExpression)
 }
 
-// 地图轨迹面板：支持改起点/改终点/改轨迹三种编辑模式并可保存回滚。
+function fallbackLineFromPoints(points: Array<{ lat: number; lon: number }>): CoordPoint[] {
+  return points.map((point) => ({ lat: point.lat, lon: point.lon }))
+}
+
+async function resolvePointByName(placeName: string): Promise<{ lat: number; lon: number } | null> {
+  const { tips } = await searchAmapInputTips(placeName)
+  const first = tips[0]
+  if (!first) return null
+  return { lat: first.lat, lon: first.lng }
+}
+
 function MapPanel({
   filteredSegments,
   filters,
@@ -174,74 +175,63 @@ function MapPanel({
       }
 
       setLoading(true)
-      setMessage('正在加载轨迹点位...')
-
-      const placeItems = filteredSegments.flatMap((segment) => {
-        const viaItems = splitViaPoints(segment.viaPointsText).map((place) => ({
-          place,
-          context: segment.name,
-        }))
-
-        return [
-          ...(segment.startCoord ? [] : [{ place: normalizePlaceName(segment.startPoint), context: segment.name }]),
-          ...viaItems,
-          ...(segment.endCoord ? [] : [{ place: normalizePlaceName(segment.endPoint), context: segment.name }]),
-        ]
-      })
-
-      const geoMap = await geocodePlacesSerial(placeItems)
-      if (!active) return
-
-      let hasSkippedPoint = false
-      let hasOsrmFallback = false
+      setMessage('正在通过高德加载路线...')
 
       const nextTracks: SegmentTrack[] = []
       const pointsForParent: Record<string, CoordPoint[]> = {}
+      const warnings: string[] = []
 
       for (const segment of filteredSegments) {
-        const points: SegmentTrack['points'] = []
+        const segmentEndpointDraft = endpointDraft?.segmentId === segment.id ? endpointDraft : null
 
-        const startName = normalizePlaceName(segment.startPoint)
-        if (segment.startCoord) {
-          points.push({ name: startName, lat: segment.startCoord.lat, lon: segment.startCoord.lon, type: 'start' })
-        } else if (geoMap[startName]) {
-          points.push({ name: startName, lat: geoMap[startName].lat, lon: geoMap[startName].lon, type: 'start' })
+        const startName = segmentEndpointDraft?.startPoint ?? segment.startPoint
+        const endName = segmentEndpointDraft?.endPoint ?? segment.endPoint
+
+        let startCoord = segmentEndpointDraft?.startCoord ?? segment.startCoord
+        let endCoord = segmentEndpointDraft?.endCoord ?? segment.endCoord
+
+        if (!startCoord && startName) {
+          const resolved = await resolvePointByName(startName)
+          if (resolved) startCoord = resolved
+        }
+        if (!endCoord && endName) {
+          const resolved = await resolvePointByName(endName)
+          if (resolved) endCoord = resolved
         }
 
-        for (const viaName of splitViaPoints(segment.viaPointsText)) {
-          const geo = geoMap[viaName]
-          if (geo) {
-            points.push({ name: viaName, lat: geo.lat, lon: geo.lon, type: 'via' })
-          } else {
-            hasSkippedPoint = true
-          }
+        const resolvedWaypoints = (segment.waypoints ?? []).filter(
+          (point): point is Waypoint & { lat: number; lng: number } =>
+            typeof point.lat === 'number' && typeof point.lng === 'number',
+        )
+
+        const markerPoints: Array<{ name: string; lat: number; lon: number; type: PointKind }> = []
+        if (startCoord) markerPoints.push({ name: startName, lat: startCoord.lat, lon: startCoord.lon, type: 'start' })
+        for (const waypoint of resolvedWaypoints) {
+          markerPoints.push({ name: waypoint.name, lat: waypoint.lat, lon: waypoint.lng, type: 'via' })
+        }
+        if (endCoord) markerPoints.push({ name: endName, lat: endCoord.lat, lon: endCoord.lon, type: 'end' })
+
+        if (markerPoints.length < 2) {
+          warnings.push(`路段「${segment.name}」缺少可用起终点坐标，无法规划。`)
+          continue
         }
 
-        const endName = normalizePlaceName(segment.endPoint)
-        if (segment.endCoord) {
-          points.push({ name: endName, lat: segment.endCoord.lat, lon: segment.endCoord.lon, type: 'end' })
-        } else if (geoMap[endName]) {
-          points.push({ name: endName, lat: geoMap[endName].lat, lon: geoMap[endName].lon, type: 'end' })
-        }
+        const drivingPoints = markerPoints.map((point) => ({ lat: point.lat, lng: point.lon }))
+        const { route, error } = await planDrivingRoute(drivingPoints, segment.preference)
 
-        if (!points.length) continue
-
-        let line: CoordPoint[] = points.map((point) => ({ lat: point.lat, lon: point.lon }))
-
-        if (points.length >= 2) {
-          const osrmLine = await fetchRoadPolyline(points, segment.preference)
-          if (osrmLine?.length) {
-            line = osrmLine.map(([lat, lon]) => ({ lat, lon }))
-          } else {
-            hasOsrmFallback = true
-          }
+        let line = fallbackLineFromPoints(markerPoints)
+        if (route?.polyline?.length) {
+          line = route.polyline.map(([lat, lng]) => ({ lat, lon: lng }))
+        } else {
+          const reason = error?.message ?? '未知错误'
+          warnings.push(`路段「${segment.name}」规划失败：${reason}，已降级为直线连接。`)
         }
 
         pointsForParent[segment.id] = line
         nextTracks.push({
           segmentId: segment.id,
           segmentName: segment.name,
-          points,
+          points: markerPoints,
           line,
         })
       }
@@ -251,13 +241,11 @@ function MapPanel({
       setTracks(nextTracks)
       onTracksComputed(pointsForParent)
       setLoading(false)
-
-      const messageParts: string[] = []
-      if (!nextTracks.length) messageParts.push('未能解析有效地点，请检查起点/终点/途径点文本。')
-      if (hasSkippedPoint) messageParts.push('部分地点解析失败，已跳过不可用点位。')
-      if (hasOsrmFallback) messageParts.push('路网轨迹生成失败，已使用直线连接。')
-
-      setMessage(messageParts.join(' '))
+      if (!nextTracks.length) {
+        setMessage('未解析出可展示路线，请检查起点/终点和途经点是否已选择候选。')
+        return
+      }
+      setMessage(warnings.length ? warnings.join(' ') : '已加载高德路线。')
     }
 
     void buildTracks()
@@ -265,7 +253,7 @@ function MapPanel({
     return () => {
       active = false
     }
-  }, [filteredSegments, shouldPromptSelectMore, onTracksComputed])
+  }, [filteredSegments, shouldPromptSelectMore, onTracksComputed, endpointDraft])
 
   const editingTrack = useMemo(
     () => (editingSegmentId ? tracks.find((track) => track.segmentId === editingSegmentId) ?? null : null),
@@ -293,16 +281,14 @@ function MapPanel({
     return tracks.map((track) => {
       if (track.segmentId !== editingTrack.segmentId) return track
 
-      const mutablePoints = track.points.map((point, index, arr) => {
+      const mutablePoints = track.points.map((point) => {
         if (!draftLine.length) return point
         if (point.type === 'start') return { ...point, lat: draftLine[0].lat, lon: draftLine[0].lon }
         if (point.type === 'end') {
           const end = draftLine[draftLine.length - 1]
           return { ...point, lat: end.lat, lon: end.lon }
         }
-        const viaIndex = Math.floor(((index + 1) / (arr.length + 1)) * draftLine.length)
-        const via = draftLine[Math.min(Math.max(viaIndex, 1), draftLine.length - 2)]
-        return via ? { ...point, lat: via.lat, lon: via.lon } : point
+        return point
       })
 
       return {
@@ -322,20 +308,12 @@ function MapPanel({
       if (indices.length >= CONTROL_POINT_MAX) break
     }
 
-    if (!indices.length) {
-      indices.push(Math.floor(draftLine.length / 2))
-    }
-
+    if (!indices.length) indices.push(Math.floor(draftLine.length / 2))
     return indices
   }, [draftLine, editMode])
 
   const allLatLng = useMemo(
-    () =>
-      displayedTracks.flatMap((track) =>
-        track.line.length
-          ? toLatLng(track.line)
-          : track.points.map((point) => [point.lat, point.lon] as LatLngExpression),
-      ),
+    () => displayedTracks.flatMap((track) => toLatLng(track.line)),
     [displayedTracks],
   )
 
@@ -402,8 +380,9 @@ function MapPanel({
       <div className="map-panel-wrapper">
         <MapContainer center={defaultCenter} zoom={4} className="map-container">
           <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution='&copy; <a href="https://www.amap.com/">Amap</a>'
+            url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
+            subdomains={[1, 2, 3, 4]}
           />
 
           {displayedTracks.map((track) =>
@@ -428,7 +407,7 @@ function MapPanel({
                     draggable && draftLine
                       ? {
                           drag: (event: any) => {
-                            const marker = event.target as L.Marker
+                            const marker = event.target as any
                             const latlng = marker.getLatLng()
                             if (editingSegmentId === track.segmentId) {
                               onEndpointDraftChange({
@@ -441,9 +420,7 @@ function MapPanel({
                             setDraftLine((prev) => {
                               if (!prev || !prev.length) return prev
                               const next = [...prev]
-                              if (point.type === 'start') {
-                                next[0] = { ...next[0], lat: latlng.lat, lon: latlng.lng }
-                              }
+                              if (point.type === 'start') next[0] = { ...next[0], lat: latlng.lat, lon: latlng.lng }
                               if (point.type === 'end') {
                                 next[next.length - 1] = {
                                   ...next[next.length - 1],
@@ -459,7 +436,7 @@ function MapPanel({
                   }
                 >
                   <Popup>
-                    {track.segmentName} · {point.type === 'start' ? '起点' : point.type === 'end' ? '终点' : '途径点'}
+                    {track.segmentName} · {point.type === 'start' ? '起点' : point.type === 'end' ? '终点' : '途经点'}
                   </Popup>
                 </Marker>
               )
@@ -478,7 +455,7 @@ function MapPanel({
                   draggable
                   eventHandlers={{
                     drag: (event: any) => {
-                      const marker = event.target as L.Marker
+                      const marker = event.target as any
                       const latlng = marker.getLatLng()
                       setDraftLine((prev) => {
                         if (!prev) return prev

@@ -258,13 +258,15 @@ function App() {
         }}
         onUpdateWaypointName={(id, name) => {
           setWaypointDrafts((prev) =>
-            prev.map((item) => (item.id === id ? { ...item, name, lat: undefined, lng: undefined } : item)),
+            prev.map((item) => (item.id === id ? { ...item, name, lat: undefined, lng: undefined, amapId: undefined } : item)),
           )
         }}
         onSelectWaypointPlace={(id, payload) => {
           setWaypointDrafts((prev) =>
             prev.map((item) =>
-              item.id === id ? { ...item, name: payload.label, lat: payload.lat, lng: payload.lng } : item,
+              item.id === id
+                ? { ...item, name: payload.label, lat: payload.lat, lng: payload.lng, amapId: payload.amapId }
+                : item,
             ),
           )
         }}

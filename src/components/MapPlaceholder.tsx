@@ -34,7 +34,7 @@ interface MapPlaceholderProps {
   onSaveWaypoints: () => void
   onAddWaypoint: () => void
   onUpdateWaypointName: (id: string, name: string) => void
-  onSelectWaypointPlace: (id: string, payload: { label: string; lat: number; lng: number }) => void
+  onSelectWaypointPlace: (id: string, payload: { label: string; lat: number; lng: number; amapId?: string }) => void
   onMoveWaypoint: (id: string, direction: 'up' | 'down') => void
   onDeleteWaypoint: (id: string) => void
 
@@ -44,7 +44,7 @@ interface MapPlaceholderProps {
   onCancelEndpointEdit: () => void
   onSaveEndpoints: () => void
   onUpdateEndpointText: (field: 'startPoint' | 'endPoint', text: string) => void
-  onSelectEndpointPlace: (field: 'startPoint' | 'endPoint', payload: { label: string; lat: number; lng: number }) => void
+  onSelectEndpointPlace: (field: 'startPoint' | 'endPoint', payload: { label: string; lat: number; lng: number; amapId?: string }) => void
 }
 
 // 地图占位组件：展示筛选结果、路线级编辑入口、途经点与起终点编辑。
@@ -93,7 +93,8 @@ function MapPlaceholder({
         <select value={routeType} onChange={(e) => onChangeRouteType(e.target.value as RoutePreference)}>
           <option value="HIGHWAY_FIRST">高速优先</option>
           <option value="LESS_TOLL">避开高速</option>
-          <option value="NORMAL_ROAD_FIRST">国道优先</option>
+          <option value="NORMAL_ROAD_FIRST">普通道路优先</option>
+          <option value="AVOID_TOLL">避免收费</option>
           <option value="SHORTEST_TIME">最短时间</option>
         </select>
       </label>
@@ -139,7 +140,8 @@ function MapPlaceholder({
                 onSelectEndpointPlace('startPoint', {
                   label: result.label,
                   lat: result.lat,
-                  lng: result.lon,
+                  lng: result.lng,
+                  amapId: result.amapId,
                 })
               }
               placeholder="输入起点地名"
@@ -155,7 +157,8 @@ function MapPlaceholder({
                 onSelectEndpointPlace('endPoint', {
                   label: result.label,
                   lat: result.lat,
-                  lng: result.lon,
+                  lng: result.lng,
+                  amapId: result.amapId,
                 })
               }
               placeholder="输入终点地名"
@@ -200,7 +203,8 @@ function MapPlaceholder({
                     onSelectWaypointPlace(waypoint.id, {
                       label: result.label,
                       lat: result.lat,
-                      lng: result.lon,
+                      lng: result.lng,
+                      amapId: result.amapId,
                     })
                   }
                   placeholder="输入地名并选择候选"

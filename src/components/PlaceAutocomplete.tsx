@@ -1,17 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  formatPlaceLabel,
-  normalizeQuery,
-  searchPlaces,
-  type NominatimPlace,
-} from '../utils/nominatim'
+import { searchAmapInputTips, type AMapPlaceSuggestion } from '../services/amap'
 
 interface PlaceSelectResult {
   label: string
   lat: number
-  lon: number
-  placeId?: string
-  raw: NominatimPlace
+  lng: number
+  amapId?: string
+  raw: AMapPlaceSuggestion
 }
 
 interface PlaceAutocompleteProps {
@@ -22,7 +17,6 @@ interface PlaceAutocompleteProps {
   disabled?: boolean
 }
 
-// 地名联想输入：提供防抖搜索、候选下拉和点击选中回填。
 function PlaceAutocomplete({
   valueText,
   onValueTextChange,
@@ -32,7 +26,7 @@ function PlaceAutocomplete({
 }: PlaceAutocompleteProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [candidates, setCandidates] = useState<NominatimPlace[]>([])
+  const [candidates, setCandidates] = useState<AMapPlaceSuggestion[]>([])
   const [error, setError] = useState('')
   const requestIdRef = useRef(0)
 
@@ -43,10 +37,11 @@ function PlaceAutocomplete({
       return
     }
 
-    const q = normalizeQuery(valueText)
+    const q = valueText.trim()
     if (q.length < 2) {
       setCandidates([])
       setOpen(false)
+      setError('')
       return
     }
 
@@ -56,23 +51,15 @@ function PlaceAutocomplete({
     const timer = window.setTimeout(async () => {
       setLoading(true)
       setError('')
-      try {
-        const list = await searchPlaces(q, controller.signal)
-        if (currentId !== requestIdRef.current) return
-        setCandidates(list)
-        setOpen(true)
-      } catch (err) {
-        if ((err as Error).name !== 'AbortError') {
-          setError('地点联想请求失败，请稍后重试。')
-          setCandidates([])
-          setOpen(true)
-        }
-      } finally {
-        if (currentId === requestIdRef.current) {
-          setLoading(false)
-        }
+      const { tips, error: apiError } = await searchAmapInputTips(q, controller.signal)
+      if (currentId !== requestIdRef.current) return
+      setCandidates(tips)
+      setOpen(true)
+      if (apiError) {
+        setError(apiError.message)
       }
-    }, 400)
+      setLoading(false)
+    }, 350)
 
     return () => {
       controller.abort()
@@ -80,18 +67,15 @@ function PlaceAutocomplete({
     }
   }, [disabled, valueText])
 
-  const handleSelect = (candidate: NominatimPlace) => {
-    const label = formatPlaceLabel(candidate.address) || normalizeQuery(valueText)
-
-    onValueTextChange(label)
+  const handleSelect = (candidate: AMapPlaceSuggestion) => {
+    onValueTextChange(candidate.name)
     onSelect({
-      label,
-      lat: Number(candidate.lat),
-      lon: Number(candidate.lon),
-      placeId: candidate.place_id ? String(candidate.place_id) : undefined,
+      label: candidate.name,
+      lat: candidate.lat,
+      lng: candidate.lng,
+      amapId: candidate.id,
       raw: candidate,
     })
-
     setOpen(false)
     setCandidates([])
   }
@@ -101,7 +85,7 @@ function PlaceAutocomplete({
       <input
         value={valueText}
         onFocus={() => {
-          if (candidates.length) setOpen(true)
+          if (candidates.length || error) setOpen(true)
         }}
         onChange={(event) => {
           onValueTextChange(event.target.value)
@@ -117,26 +101,21 @@ function PlaceAutocomplete({
         <div className="autocomplete-dropdown">
           {loading && <div className="autocomplete-item muted">搜索中...</div>}
           {!loading && error && <div className="autocomplete-item muted">{error}</div>}
-          {!loading && !error && !candidates.length && (
-            <div className="autocomplete-item muted">未找到匹配地点</div>
-          )}
+          {!loading && !error && !candidates.length && <div className="autocomplete-item muted">未找到匹配地点</div>}
 
           {!loading &&
             !error &&
-            candidates.map((candidate) => {
-              const label = formatPlaceLabel(candidate.address) || candidate.display_name
-              return (
-                <button
-                  type="button"
-                  className="autocomplete-item"
-                  key={`${candidate.place_id}-${candidate.lat}-${candidate.lon}`}
-                  onMouseDown={() => handleSelect(candidate)}
-                >
-                  <span>{label}</span>
-                  <small>{candidate.display_name}</small>
-                </button>
-              )
-            })}
+            candidates.map((candidate) => (
+              <button
+                type="button"
+                className="autocomplete-item"
+                key={`${candidate.id ?? candidate.name}-${candidate.lat}-${candidate.lng}`}
+                onMouseDown={() => handleSelect(candidate)}
+              >
+                <span>{candidate.name}</span>
+                <small>{candidate.displayName}</small>
+              </button>
+            ))}
         </div>
       )}
     </div>

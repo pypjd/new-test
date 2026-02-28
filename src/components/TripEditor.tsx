@@ -167,8 +167,8 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
           }}
           onSelect={(result) => {
             setSegmentStartPoint(result.label)
-            setSegmentStartCoord({ lat: result.lat, lon: result.lon })
-            setSegmentStartPlaceId(result.placeId)
+            setSegmentStartCoord({ lat: result.lat, lon: result.lng })
+            setSegmentStartPlaceId(result.amapId)
           }}
           placeholder="起点（输入后从候选中选择）"
           disabled={!segmentTripId}
@@ -183,8 +183,8 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
           }}
           onSelect={(result) => {
             setSegmentEndPoint(result.label)
-            setSegmentEndCoord({ lat: result.lat, lon: result.lon })
-            setSegmentEndPlaceId(result.placeId)
+            setSegmentEndCoord({ lat: result.lat, lon: result.lng })
+            setSegmentEndPlaceId(result.amapId)
           }}
           placeholder="终点（输入后从候选中选择）"
           disabled={!segmentTripId}
