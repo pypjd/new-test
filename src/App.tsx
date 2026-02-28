@@ -5,16 +5,36 @@ import MapPanel from './components/MapPanel'
 import TripEditor from './components/TripEditor'
 import { useFilteredSegments } from './hooks/useFilteredSegments'
 import { loadTripReview, saveTripReview } from './services/tripStorage'
-import type { CoordPoint, FilterState, RoutePreference, RouteSummary, TripReview } from './types/trip'
+import type {
+  CoordPoint,
+  FilterState,
+  RoutePreference,
+  RouteSegment,
+  RouteSummary,
+  TripReview,
+} from './types/trip'
 import './styles/app.css'
 
-// 根组件：组装数据状态、编辑动作、筛选状态与地图占位展示。
+interface WaypointItem {
+  id: string
+  lat: number
+  lon: number
+  timestamp?: string
+}
+
+const WAYPOINT_SAMPLE_STEP = 50
+const WAYPOINT_MAX = 20
+
+// 根组件：组装数据状态、编辑动作、筛选状态、占位区与地图轨迹联动。
 function App() {
   const [tripReview, setTripReview] = useState<TripReview>(() => loadTripReview())
   const [filters, setFilters] = useState<FilterState>({ tripId: '', dayId: '', segmentId: '' })
+  const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null)
+  const [selectedWaypoint, setSelectedWaypoint] = useState<WaypointItem | null>(null)
+  const [segmentTrackPoints, setSegmentTrackPoints] = useState<Record<string, CoordPoint[]>>({})
 
   useEffect(() => {
-    // 数据变化后自动持久化：新增旅程/日期/路段后刷新页面仍可恢复。
+    // 数据变化后自动持久化：新增旅程/日期/路段和编辑轨迹后刷新页面仍可恢复。
     saveTripReview(tripReview)
   }, [tripReview])
 
@@ -39,6 +59,48 @@ function App() {
       segmentName: selectedSegment?.name ?? '全部路段',
     }
   }, [tripReview.trips, filters.tripId, filters.dayId, filters.segmentId])
+
+  const activeSegmentId = useMemo(() => {
+    if (editingSegmentId && filteredSegments.some((segment) => segment.id === editingSegmentId)) {
+      return editingSegmentId
+    }
+    return filteredSegments[0]?.id ?? null
+  }, [filteredSegments, editingSegmentId])
+
+  const activeSegment = useMemo(
+    () => filteredSegments.find((segment) => segment.id === activeSegmentId) ?? null,
+    [filteredSegments, activeSegmentId],
+  )
+
+  const displayedWaypoints = useMemo<WaypointItem[]>(() => {
+    if (!activeSegment) return []
+
+    if (activeSegment.waypoints?.length) {
+      return activeSegment.waypoints.slice(0, WAYPOINT_MAX).map((point, index) => ({
+        id: `wp-${activeSegment.id}-${index}`,
+        lat: point.lat,
+        lon: point.lon,
+        timestamp: point.timestamp,
+      }))
+    }
+
+    const sourcePoints = activeSegment.points?.length
+      ? activeSegment.points
+      : (segmentTrackPoints[activeSegment.id] ?? [])
+
+    if (sourcePoints.length <= 2) return []
+
+    return sourcePoints
+      .slice(1, -1)
+      .filter((_, index) => index % WAYPOINT_SAMPLE_STEP === 0)
+      .slice(0, WAYPOINT_MAX)
+      .map((point, index) => ({
+        id: `wp-${activeSegment.id}-${index}`,
+        lat: point.lat,
+        lon: point.lon,
+        timestamp: point.timestamp,
+      }))
+  }, [activeSegment, segmentTrackPoints])
 
   const addTrip = (payload: { title: string; startDate: string; endDate: string }) => {
     setTripReview((prev) => ({
@@ -73,7 +135,7 @@ function App() {
         if (trip.id !== payload.tripId) return trip
 
         const matchedDay = trip.days.find((day) => day.date === payload.dayDate)
-        const nextSegment = {
+        const nextSegment: RouteSegment = {
           id: createId('segment'),
           name: payload.name,
           startPoint: payload.startPoint,
@@ -114,6 +176,32 @@ function App() {
     }))
   }
 
+  const saveSegmentTrack = (payload: {
+    segmentId: string
+    startCoord: CoordPoint
+    endCoord: CoordPoint
+    points: CoordPoint[]
+  }) => {
+    setTripReview((prev) => ({
+      trips: prev.trips.map((trip) => ({
+        ...trip,
+        days: trip.days.map((day) => ({
+          ...day,
+          routeSegments: day.routeSegments.map((segment) => {
+            if (segment.id !== payload.segmentId) return segment
+            return {
+              ...segment,
+              startCoord: payload.startCoord,
+              endCoord: payload.endCoord,
+              points: payload.points,
+            }
+          }),
+        })),
+      })),
+    }))
+    setEditingSegmentId(null)
+  }
+
   return (
     <main className="app-shell">
       <h1>自驾旅行复盘工具（开发中）</h1>
@@ -122,9 +210,27 @@ function App() {
 
       <FilterPanel trips={tripReview.trips} filters={filters} onChange={setFilters} />
 
-      <MapPlaceholder filteredSegments={filteredSegments} summary={summary} filterContext={filterContext} />
+      <MapPlaceholder
+        filteredSegments={filteredSegments}
+        summary={summary}
+        filterContext={filterContext}
+        editingSegmentId={editingSegmentId}
+        onEditSegment={(segmentId) => setEditingSegmentId(segmentId)}
+        activeSegmentId={activeSegmentId}
+        waypoints={displayedWaypoints}
+        onLocateWaypoint={(waypoint) => setSelectedWaypoint(waypoint)}
+      />
 
-      <MapPanel filteredSegments={filteredSegments} filters={filters} />
+      <MapPanel
+        filteredSegments={filteredSegments}
+        filters={filters}
+        editingSegmentId={editingSegmentId}
+        onStartEdit={(segmentId) => setEditingSegmentId(segmentId)}
+        onCancelEdit={() => setEditingSegmentId(null)}
+        onSaveEdit={saveSegmentTrack}
+        selectedWaypoint={selectedWaypoint}
+        onTracksComputed={setSegmentTrackPoints}
+      />
     </main>
   )
 }
