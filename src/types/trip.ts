@@ -12,7 +12,7 @@ export interface Waypoint {
   id: string
   name: string
   lat?: number
-  lon?: number
+  lng?: number
   timestamp?: string
 }
 

@@ -8,6 +8,12 @@ import type { CoordPoint, FilterState, RouteSegment, Waypoint } from '../types/t
 import { geocodePlacesSerial, normalizePlaceName } from '../utils/geocode'
 import { fetchRoadPolyline } from '../utils/osrm'
 
+interface EndpointDraft {
+  segmentId: string
+  startCoord?: CoordPoint
+  endCoord?: CoordPoint
+}
+
 interface MapPanelProps {
   filteredSegments: RouteSegment[]
   filters: FilterState
@@ -22,6 +28,12 @@ interface MapPanelProps {
   }) => void
   selectedWaypoint: Waypoint | null
   onTracksComputed: (tracks: Record<string, CoordPoint[]>) => void
+  endpointDraft: EndpointDraft | null
+  onEndpointDraftChange: (payload: {
+    segmentId: string
+    startCoord?: CoordPoint
+    endCoord?: CoordPoint
+  }) => void
 }
 
 type PointKind = 'start' | 'via' | 'end'
@@ -109,8 +121,8 @@ function WaypointFocusController({ waypoint }: WaypointFocusControllerProps) {
   const map = useMap()
 
   useEffect(() => {
-    if (!waypoint || typeof waypoint.lat !== 'number' || typeof waypoint.lon !== 'number') return
-    map.flyTo([waypoint.lat, waypoint.lon], Math.max(map.getZoom(), 12), { duration: 0.8 })
+    if (!waypoint || typeof waypoint.lat !== 'number' || typeof waypoint.lng !== 'number') return
+    map.flyTo([waypoint.lat, waypoint.lng], Math.max(map.getZoom(), 12), { duration: 0.8 })
   }, [map, waypoint])
 
   return null
@@ -137,6 +149,8 @@ function MapPanel({
   onSaveEdit,
   selectedWaypoint,
   onTracksComputed,
+  endpointDraft,
+  onEndpointDraftChange,
 }: MapPanelProps) {
   const [tracks, setTracks] = useState<SegmentTrack[]>([])
   const [loading, setLoading] = useState(false)
@@ -215,7 +229,7 @@ function MapPanel({
         let line: CoordPoint[] = points.map((point) => ({ lat: point.lat, lon: point.lon }))
 
         if (points.length >= 2) {
-          const osrmLine = await fetchRoadPolyline(points)
+          const osrmLine = await fetchRoadPolyline(points, segment.preference)
           if (osrmLine?.length) {
             line = osrmLine.map(([lat, lon]) => ({ lat, lon }))
           } else {
@@ -413,8 +427,17 @@ function MapPanel({
                   eventHandlers={
                     draggable && draftLine
                       ? {
-                          drag: (event) => {
-                            const latlng = event.target.getLatLng()
+                          drag: (event: any) => {
+                            const marker = event.target as L.Marker
+                            const latlng = marker.getLatLng()
+                            if (editingSegmentId === track.segmentId) {
+                              onEndpointDraftChange({
+                                segmentId: track.segmentId,
+                                ...(point.type === 'start'
+                                  ? { startCoord: { lat: latlng.lat, lon: latlng.lng } }
+                                  : { endCoord: { lat: latlng.lat, lon: latlng.lng } }),
+                              })
+                            }
                             setDraftLine((prev) => {
                               if (!prev || !prev.length) return prev
                               const next = [...prev]
@@ -454,8 +477,9 @@ function MapPanel({
                   icon={controlPointIcon}
                   draggable
                   eventHandlers={{
-                    drag: (event) => {
-                      const latlng = event.target.getLatLng()
+                    drag: (event: any) => {
+                      const marker = event.target as L.Marker
+                      const latlng = marker.getLatLng()
                       setDraftLine((prev) => {
                         if (!prev) return prev
                         const next = [...prev]
@@ -470,8 +494,8 @@ function MapPanel({
               )
             })}
 
-          {selectedWaypoint && typeof selectedWaypoint.lat === 'number' && typeof selectedWaypoint.lon === 'number' ? (
-            <Marker position={[selectedWaypoint.lat, selectedWaypoint.lon]} icon={selectedWaypointIcon}>
+          {selectedWaypoint && typeof selectedWaypoint.lat === 'number' && typeof selectedWaypoint.lng === 'number' ? (
+            <Marker position={[selectedWaypoint.lat, selectedWaypoint.lng]} icon={selectedWaypointIcon}>
               <Popup>{selectedWaypoint.name || '已定位途经点'}</Popup>
             </Marker>
           ) : null}

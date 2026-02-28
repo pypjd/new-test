@@ -16,8 +16,13 @@ import type {
 } from './types/trip'
 import './styles/app.css'
 
-const WAYPOINT_SAMPLE_STEP = 50
-const WAYPOINT_MAX = 20
+interface EndpointDraft {
+  segmentId: string
+  startPoint: string
+  endPoint: string
+  startCoord?: CoordPoint
+  endCoord?: CoordPoint
+}
 
 // 根组件：组装数据状态、编辑动作、筛选状态、占位区与地图轨迹联动。
 function App() {
@@ -25,23 +30,22 @@ function App() {
   const [filters, setFilters] = useState<FilterState>({ tripId: '', dayId: '', segmentId: '' })
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null)
   const [selectedWaypointId, setSelectedWaypointId] = useState<string | null>(null)
-  const [segmentTrackPoints, setSegmentTrackPoints] = useState<Record<string, CoordPoint[]>>({})
+  const [, setSegmentTrackPoints] = useState<Record<string, CoordPoint[]>>({})
 
   const [editingWaypointSegmentId, setEditingWaypointSegmentId] = useState<string | null>(null)
   const [waypointDrafts, setWaypointDrafts] = useState<Waypoint[]>([])
 
+  const [editingEndpointsSegmentId, setEditingEndpointsSegmentId] = useState<string | null>(null)
+  const [endpointDraft, setEndpointDraft] = useState<EndpointDraft | null>(null)
+
   useEffect(() => {
-    // 数据变化后自动持久化：新增旅程/日期/路段和编辑轨迹后刷新页面仍可恢复。
     saveTripReview(tripReview)
   }, [tripReview])
 
   const filteredSegments = useFilteredSegments(tripReview.trips, filters)
 
   const summary: RouteSummary = useMemo(
-    () => ({
-      totalDistanceText: '待生成',
-      totalDurationText: '待生成',
-    }),
+    () => ({ totalDistanceText: '待生成', totalDurationText: '待生成' }),
     [],
   )
 
@@ -71,46 +75,24 @@ function App() {
 
   const displayedWaypoints = useMemo<Waypoint[]>(() => {
     if (!activeSegment) return []
-
-    if (activeSegment.waypoints?.length) {
-      return activeSegment.waypoints
-    }
-
-    const sourcePoints = activeSegment.points?.length
-      ? activeSegment.points
-      : (segmentTrackPoints[activeSegment.id] ?? [])
-
-    if (sourcePoints.length <= 2) return []
-
-    return sourcePoints
-      .slice(1, -1)
-      .filter((_, index) => index % WAYPOINT_SAMPLE_STEP === 0)
-      .slice(0, WAYPOINT_MAX)
-      .map((point, index) => ({
-        id: `wp-${activeSegment.id}-${index}`,
-        name: `途经点 ${index + 1}`,
-        lat: point.lat,
-        lon: point.lon,
-        timestamp: point.timestamp,
-      }))
-  }, [activeSegment, segmentTrackPoints])
+    return activeSegment.waypoints ?? []
+  }, [activeSegment])
 
   const selectedWaypoint = useMemo(() => {
     const source = editingWaypointSegmentId === activeSegmentId ? waypointDrafts : displayedWaypoints
     return source.find((waypoint) => waypoint.id === selectedWaypointId) ?? null
   }, [displayedWaypoints, editingWaypointSegmentId, activeSegmentId, waypointDrafts, selectedWaypointId])
 
+  const effectiveEndpointDraft = useMemo(() => {
+    if (!endpointDraft || endpointDraft.segmentId !== activeSegmentId) return null
+    return endpointDraft
+  }, [endpointDraft, activeSegmentId])
+
   const addTrip = (payload: { title: string; startDate: string; endDate: string }) => {
     setTripReview((prev) => ({
       trips: [
         ...prev.trips,
-        {
-          id: createId('trip'),
-          title: payload.title,
-          startDate: payload.startDate,
-          endDate: payload.endDate,
-          days: [],
-        },
+        { id: createId('trip'), title: payload.title, startDate: payload.startDate, endDate: payload.endDate, days: [] },
       ],
     }))
   }
@@ -149,28 +131,29 @@ function App() {
         if (!matchedDay) {
           return {
             ...trip,
-            days: [
-              ...trip.days,
-              {
-                id: payload.dayDate,
-                date: payload.dayDate,
-                routeSegments: [nextSegment],
-              },
-            ],
+            days: [...trip.days, { id: payload.dayDate, date: payload.dayDate, routeSegments: [nextSegment] }],
           }
         }
 
         return {
           ...trip,
-          days: trip.days.map((day) => {
-            if (day.date !== payload.dayDate) return day
-            return {
-              ...day,
-              routeSegments: [...day.routeSegments, nextSegment],
-            }
-          }),
+          days: trip.days.map((day) =>
+            day.date !== payload.dayDate ? day : { ...day, routeSegments: [...day.routeSegments, nextSegment] },
+          ),
         }
       }),
+    }))
+  }
+
+  const updateSegment = (segmentId: string, updater: (segment: RouteSegment) => RouteSegment) => {
+    setTripReview((prev) => ({
+      trips: prev.trips.map((trip) => ({
+        ...trip,
+        days: trip.days.map((day) => ({
+          ...day,
+          routeSegments: day.routeSegments.map((segment) => (segment.id === segmentId ? updater(segment) : segment)),
+        })),
+      })),
     }))
   }
 
@@ -180,22 +163,11 @@ function App() {
     endCoord: CoordPoint
     points: CoordPoint[]
   }) => {
-    setTripReview((prev) => ({
-      trips: prev.trips.map((trip) => ({
-        ...trip,
-        days: trip.days.map((day) => ({
-          ...day,
-          routeSegments: day.routeSegments.map((segment) => {
-            if (segment.id !== payload.segmentId) return segment
-            return {
-              ...segment,
-              startCoord: payload.startCoord,
-              endCoord: payload.endCoord,
-              points: payload.points,
-            }
-          }),
-        })),
-      })),
+    updateSegment(payload.segmentId, (segment) => ({
+      ...segment,
+      startCoord: payload.startCoord,
+      endCoord: payload.endCoord,
+      points: payload.points,
     }))
     setEditingSegmentId(null)
   }
@@ -203,31 +175,52 @@ function App() {
   const startWaypointEdit = (segmentId: string) => {
     const target = filteredSegments.find((segment) => segment.id === segmentId)
     setEditingWaypointSegmentId(segmentId)
-    setWaypointDrafts([...(target?.waypoints ?? displayedWaypoints)])
+    setWaypointDrafts([...(target?.waypoints ?? [])])
   }
 
   const saveWaypoints = () => {
     if (!editingWaypointSegmentId) return
-
-    setTripReview((prev) => ({
-      trips: prev.trips.map((trip) => ({
-        ...trip,
-        days: trip.days.map((day) => ({
-          ...day,
-          routeSegments: day.routeSegments.map((segment) => {
-            if (segment.id !== editingWaypointSegmentId) return segment
-            return {
-              ...segment,
-              waypoints: waypointDrafts,
-            }
-          }),
-        })),
-      })),
-    }))
-
+    updateSegment(editingWaypointSegmentId, (segment) => ({ ...segment, waypoints: waypointDrafts }))
     setEditingWaypointSegmentId(null)
     setWaypointDrafts([])
   }
+
+  const startEndpointsEdit = (segmentId: string) => {
+    const target = filteredSegments.find((segment) => segment.id === segmentId)
+    if (!target) return
+    setEditingEndpointsSegmentId(segmentId)
+    setEndpointDraft({
+      segmentId,
+      startPoint: target.startPoint,
+      endPoint: target.endPoint,
+      startCoord: target.startCoord,
+      endCoord: target.endCoord,
+    })
+  }
+
+  const saveEndpoints = () => {
+    if (!editingEndpointsSegmentId || !endpointDraft) return
+
+    updateSegment(editingEndpointsSegmentId, (segment) => {
+      const nextPoints = segment.points ? [...segment.points] : undefined
+      if (nextPoints?.length && endpointDraft.startCoord) nextPoints[0] = endpointDraft.startCoord
+      if (nextPoints?.length && endpointDraft.endCoord) nextPoints[nextPoints.length - 1] = endpointDraft.endCoord
+
+      return {
+        ...segment,
+        startPoint: endpointDraft.startPoint,
+        endPoint: endpointDraft.endPoint,
+        startCoord: endpointDraft.startCoord,
+        endCoord: endpointDraft.endCoord,
+        points: nextPoints,
+      }
+    })
+
+    setEditingEndpointsSegmentId(null)
+    setEndpointDraft(null)
+  }
+
+  const routeTypeValue = activeSegment?.preference ?? 'HIGHWAY_FIRST'
 
   return (
     <main className="app-shell">
@@ -244,6 +237,11 @@ function App() {
         editingSegmentId={editingSegmentId}
         activeSegmentId={activeSegmentId}
         onEditSegment={(segmentId) => setEditingSegmentId(segmentId)}
+        routeType={routeTypeValue}
+        onChangeRouteType={(value) => {
+          if (!activeSegmentId) return
+          updateSegment(activeSegmentId, (segment) => ({ ...segment, preference: value }))
+        }}
         waypoints={editingWaypointSegmentId === activeSegmentId ? waypointDrafts : displayedWaypoints}
         onLocateWaypoint={(waypoint) => setSelectedWaypointId(waypoint.id)}
         waypointEditMode={editingWaypointSegmentId === activeSegmentId}
@@ -260,13 +258,13 @@ function App() {
         }}
         onUpdateWaypointName={(id, name) => {
           setWaypointDrafts((prev) =>
-            prev.map((item) => (item.id === id ? { ...item, name, lat: undefined, lon: undefined } : item)),
+            prev.map((item) => (item.id === id ? { ...item, name, lat: undefined, lng: undefined } : item)),
           )
         }}
         onSelectWaypointPlace={(id, payload) => {
           setWaypointDrafts((prev) =>
             prev.map((item) =>
-              item.id === id ? { ...item, name: payload.label, lat: payload.lat, lon: payload.lon } : item,
+              item.id === id ? { ...item, name: payload.label, lat: payload.lat, lng: payload.lng } : item,
             ),
           )
         }}
@@ -285,6 +283,38 @@ function App() {
         onDeleteWaypoint={(id) => {
           setWaypointDrafts((prev) => prev.filter((item) => item.id !== id))
         }}
+        endpointEditMode={editingEndpointsSegmentId === activeSegmentId}
+        endpointDraft={effectiveEndpointDraft}
+        onStartEndpointEdit={() => {
+          if (activeSegmentId) startEndpointsEdit(activeSegmentId)
+        }}
+        onCancelEndpointEdit={() => {
+          setEditingEndpointsSegmentId(null)
+          setEndpointDraft(null)
+        }}
+        onSaveEndpoints={saveEndpoints}
+        onUpdateEndpointText={(field, text) => {
+          setEndpointDraft((prev) => {
+            if (!prev) return prev
+            return {
+              ...prev,
+              [field]: text,
+              ...(field === 'startPoint' ? { startCoord: undefined } : { endCoord: undefined }),
+            }
+          })
+        }}
+        onSelectEndpointPlace={(field, payload) => {
+          setEndpointDraft((prev) => {
+            if (!prev) return prev
+            return {
+              ...prev,
+              [field]: payload.label,
+              ...(field === 'startPoint'
+                ? { startCoord: { lat: payload.lat, lon: payload.lng } }
+                : { endCoord: { lat: payload.lat, lon: payload.lng } }),
+            }
+          })
+        }}
       />
 
       <MapPanel
@@ -296,12 +326,22 @@ function App() {
         onSaveEdit={saveSegmentTrack}
         selectedWaypoint={selectedWaypoint}
         onTracksComputed={setSegmentTrackPoints}
+        endpointDraft={effectiveEndpointDraft}
+        onEndpointDraftChange={(payload) => {
+          setEndpointDraft((prev) => {
+            if (!prev || prev.segmentId !== payload.segmentId) return prev
+            return {
+              ...prev,
+              startCoord: payload.startCoord,
+              endCoord: payload.endCoord,
+            }
+          })
+        }}
       />
     </main>
   )
 }
 
-// 简易 ID 生成器：用于前端原型阶段快速创建唯一标识。
 function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`
 }
