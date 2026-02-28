@@ -118,6 +118,10 @@ select:disabled {
   line-height: 1;
 }
 
+.custom-point-icon.control {
+  background: #7c3aed;
+}
+
 .autocomplete-field {
   position: relative;
 }
@@ -187,6 +191,17 @@ select:disabled {
   margin-top: 10px;
 }
 
+.waypoint-actions,
+.waypoint-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.waypoint-item {
+  align-items: flex-start !important;
+}
+
 .map-section-with-toolbar {
   position: relative;
 }
@@ -198,6 +213,17 @@ select:disabled {
   z-index: 1300;
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
+}
+
+.edit-mode-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.edit-mode-tabs .active {
+  background: #2563eb;
+  color: #fff;
 }
 
 .custom-point-icon.waypoint-selected {

@@ -12,15 +12,9 @@ import type {
   RouteSegment,
   RouteSummary,
   TripReview,
+  Waypoint,
 } from './types/trip'
 import './styles/app.css'
-
-interface WaypointItem {
-  id: string
-  lat: number
-  lon: number
-  timestamp?: string
-}
 
 const WAYPOINT_SAMPLE_STEP = 50
 const WAYPOINT_MAX = 20
@@ -30,8 +24,11 @@ function App() {
   const [tripReview, setTripReview] = useState<TripReview>(() => loadTripReview())
   const [filters, setFilters] = useState<FilterState>({ tripId: '', dayId: '', segmentId: '' })
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null)
-  const [selectedWaypoint, setSelectedWaypoint] = useState<WaypointItem | null>(null)
+  const [selectedWaypointId, setSelectedWaypointId] = useState<string | null>(null)
   const [segmentTrackPoints, setSegmentTrackPoints] = useState<Record<string, CoordPoint[]>>({})
+
+  const [editingWaypointSegmentId, setEditingWaypointSegmentId] = useState<string | null>(null)
+  const [waypointDrafts, setWaypointDrafts] = useState<Waypoint[]>([])
 
   useEffect(() => {
     // 数据变化后自动持久化：新增旅程/日期/路段和编辑轨迹后刷新页面仍可恢复。
@@ -72,16 +69,11 @@ function App() {
     [filteredSegments, activeSegmentId],
   )
 
-  const displayedWaypoints = useMemo<WaypointItem[]>(() => {
+  const displayedWaypoints = useMemo<Waypoint[]>(() => {
     if (!activeSegment) return []
 
     if (activeSegment.waypoints?.length) {
-      return activeSegment.waypoints.slice(0, WAYPOINT_MAX).map((point, index) => ({
-        id: `wp-${activeSegment.id}-${index}`,
-        lat: point.lat,
-        lon: point.lon,
-        timestamp: point.timestamp,
-      }))
+      return activeSegment.waypoints
     }
 
     const sourcePoints = activeSegment.points?.length
@@ -96,11 +88,17 @@ function App() {
       .slice(0, WAYPOINT_MAX)
       .map((point, index) => ({
         id: `wp-${activeSegment.id}-${index}`,
+        name: `途经点 ${index + 1}`,
         lat: point.lat,
         lon: point.lon,
         timestamp: point.timestamp,
       }))
   }, [activeSegment, segmentTrackPoints])
+
+  const selectedWaypoint = useMemo(() => {
+    const source = editingWaypointSegmentId === activeSegmentId ? waypointDrafts : displayedWaypoints
+    return source.find((waypoint) => waypoint.id === selectedWaypointId) ?? null
+  }, [displayedWaypoints, editingWaypointSegmentId, activeSegmentId, waypointDrafts, selectedWaypointId])
 
   const addTrip = (payload: { title: string; startDate: string; endDate: string }) => {
     setTripReview((prev) => ({
@@ -202,6 +200,35 @@ function App() {
     setEditingSegmentId(null)
   }
 
+  const startWaypointEdit = (segmentId: string) => {
+    const target = filteredSegments.find((segment) => segment.id === segmentId)
+    setEditingWaypointSegmentId(segmentId)
+    setWaypointDrafts([...(target?.waypoints ?? displayedWaypoints)])
+  }
+
+  const saveWaypoints = () => {
+    if (!editingWaypointSegmentId) return
+
+    setTripReview((prev) => ({
+      trips: prev.trips.map((trip) => ({
+        ...trip,
+        days: trip.days.map((day) => ({
+          ...day,
+          routeSegments: day.routeSegments.map((segment) => {
+            if (segment.id !== editingWaypointSegmentId) return segment
+            return {
+              ...segment,
+              waypoints: waypointDrafts,
+            }
+          }),
+        })),
+      })),
+    }))
+
+    setEditingWaypointSegmentId(null)
+    setWaypointDrafts([])
+  }
+
   return (
     <main className="app-shell">
       <h1>自驾旅行复盘工具（开发中）</h1>
@@ -215,10 +242,49 @@ function App() {
         summary={summary}
         filterContext={filterContext}
         editingSegmentId={editingSegmentId}
-        onEditSegment={(segmentId) => setEditingSegmentId(segmentId)}
         activeSegmentId={activeSegmentId}
-        waypoints={displayedWaypoints}
-        onLocateWaypoint={(waypoint) => setSelectedWaypoint(waypoint)}
+        onEditSegment={(segmentId) => setEditingSegmentId(segmentId)}
+        waypoints={editingWaypointSegmentId === activeSegmentId ? waypointDrafts : displayedWaypoints}
+        onLocateWaypoint={(waypoint) => setSelectedWaypointId(waypoint.id)}
+        waypointEditMode={editingWaypointSegmentId === activeSegmentId}
+        onStartWaypointEdit={() => {
+          if (activeSegmentId) startWaypointEdit(activeSegmentId)
+        }}
+        onCancelWaypointEdit={() => {
+          setEditingWaypointSegmentId(null)
+          setWaypointDrafts([])
+        }}
+        onSaveWaypoints={saveWaypoints}
+        onAddWaypoint={() => {
+          setWaypointDrafts((prev) => [...prev, { id: createId('wp'), name: '' }])
+        }}
+        onUpdateWaypointName={(id, name) => {
+          setWaypointDrafts((prev) =>
+            prev.map((item) => (item.id === id ? { ...item, name, lat: undefined, lon: undefined } : item)),
+          )
+        }}
+        onSelectWaypointPlace={(id, payload) => {
+          setWaypointDrafts((prev) =>
+            prev.map((item) =>
+              item.id === id ? { ...item, name: payload.label, lat: payload.lat, lon: payload.lon } : item,
+            ),
+          )
+        }}
+        onMoveWaypoint={(id, direction) => {
+          setWaypointDrafts((prev) => {
+            const idx = prev.findIndex((item) => item.id === id)
+            if (idx < 0) return prev
+            const target = direction === 'up' ? idx - 1 : idx + 1
+            if (target < 0 || target >= prev.length) return prev
+            const cloned = [...prev]
+            const [item] = cloned.splice(idx, 1)
+            cloned.splice(target, 0, item)
+            return cloned
+          })
+        }}
+        onDeleteWaypoint={(id) => {
+          setWaypointDrafts((prev) => prev.filter((item) => item.id !== id))
+        }}
       />
 
       <MapPanel

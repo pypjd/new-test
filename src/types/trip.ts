@@ -8,6 +8,14 @@ export interface CoordPoint {
   timestamp?: string
 }
 
+export interface Waypoint {
+  id: string
+  name: string
+  lat?: number
+  lon?: number
+  timestamp?: string
+}
+
 export interface RouteSegment {
   id: string
   name: string
@@ -20,7 +28,7 @@ export interface RouteSegment {
   startPlaceId?: string
   endPlaceId?: string
   points?: CoordPoint[]
-  waypoints?: CoordPoint[]
+  waypoints?: Waypoint[]
 }
 
 export interface TripDay {

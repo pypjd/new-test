@@ -4,7 +4,7 @@ import L, { type DivIcon, type LatLngExpression } from 'leaflet'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
-import type { CoordPoint, FilterState, RouteSegment } from '../types/trip'
+import type { CoordPoint, FilterState, RouteSegment, Waypoint } from '../types/trip'
 import { geocodePlacesSerial, normalizePlaceName } from '../utils/geocode'
 import { fetchRoadPolyline } from '../utils/osrm'
 
@@ -20,17 +20,18 @@ interface MapPanelProps {
     endCoord: CoordPoint
     points: CoordPoint[]
   }) => void
-  selectedWaypoint: { id: string; lat: number; lon: number } | null
+  selectedWaypoint: Waypoint | null
   onTracksComputed: (tracks: Record<string, CoordPoint[]>) => void
 }
 
 type PointKind = 'start' | 'via' | 'end'
+type EditMode = 'start' | 'end' | 'track'
 
 interface SegmentTrack {
   segmentId: string
   segmentName: string
   points: Array<{ name: string; lat: number; lon: number; type: PointKind }>
-  line: LatLngExpression[]
+  line: CoordPoint[]
 }
 
 interface ViewportControllerProps {
@@ -38,10 +39,12 @@ interface ViewportControllerProps {
 }
 
 interface WaypointFocusControllerProps {
-  waypoint: { id: string; lat: number; lon: number } | null
+  waypoint: Waypoint | null
 }
 
 const defaultCenter: [number, number] = [35.8617, 104.1954]
+const CONTROL_POINT_STEP = 25
+const CONTROL_POINT_MAX = 16
 
 // 修复 Leaflet 在 Vite 下默认 marker 图标路径。
 L.Icon.Default.mergeOptions({
@@ -71,6 +74,13 @@ const pointIcons: Record<PointKind, DivIcon> = {
   }),
 }
 
+const controlPointIcon = L.divIcon({
+  className: 'custom-point-icon-wrapper',
+  html: '<div class="custom-point-icon control">●</div>',
+  iconSize: [14, 14],
+  iconAnchor: [7, 7],
+})
+
 const selectedWaypointIcon = L.divIcon({
   className: 'custom-point-icon-wrapper',
   html: '<div class="custom-point-icon waypoint-selected">★</div>',
@@ -99,7 +109,7 @@ function WaypointFocusController({ waypoint }: WaypointFocusControllerProps) {
   const map = useMap()
 
   useEffect(() => {
-    if (!waypoint) return
+    if (!waypoint || typeof waypoint.lat !== 'number' || typeof waypoint.lon !== 'number') return
     map.flyTo([waypoint.lat, waypoint.lon], Math.max(map.getZoom(), 12), { duration: 0.8 })
   }, [map, waypoint])
 
@@ -113,7 +123,11 @@ function splitViaPoints(viaPointsText: string): string[] {
     .filter(Boolean)
 }
 
-// 地图轨迹面板：支持轨迹编辑（拖拽起终点）与途经点定位联动。
+function toLatLng(points: CoordPoint[]): LatLngExpression[] {
+  return points.map((point) => [point.lat, point.lon] as LatLngExpression)
+}
+
+// 地图轨迹面板：支持改起点/改终点/改轨迹三种编辑模式并可保存回滚。
 function MapPanel({
   filteredSegments,
   filters,
@@ -127,8 +141,9 @@ function MapPanel({
   const [tracks, setTracks] = useState<SegmentTrack[]>([])
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('请选择旅程/日期/路段以查看轨迹')
-  const [draftStart, setDraftStart] = useState<{ lat: number; lon: number } | null>(null)
-  const [draftEnd, setDraftEnd] = useState<{ lat: number; lon: number } | null>(null)
+  const [editMode, setEditMode] = useState<EditMode>('start')
+  const [draftLine, setDraftLine] = useState<CoordPoint[] | null>(null)
+  const [originalLine, setOriginalLine] = useState<CoordPoint[] | null>(null)
 
   const shouldPromptSelectMore = Boolean(filters.tripId && !filters.dayId && !filters.segmentId)
 
@@ -174,19 +189,9 @@ function MapPanel({
 
         const startName = normalizePlaceName(segment.startPoint)
         if (segment.startCoord) {
-          points.push({
-            name: startName,
-            lat: segment.startCoord.lat,
-            lon: segment.startCoord.lon,
-            type: 'start',
-          })
+          points.push({ name: startName, lat: segment.startCoord.lat, lon: segment.startCoord.lon, type: 'start' })
         } else if (geoMap[startName]) {
-          points.push({
-            name: startName,
-            lat: geoMap[startName].lat,
-            lon: geoMap[startName].lon,
-            type: 'start',
-          })
+          points.push({ name: startName, lat: geoMap[startName].lat, lon: geoMap[startName].lon, type: 'start' })
         }
 
         for (const viaName of splitViaPoints(segment.viaPointsText)) {
@@ -200,47 +205,25 @@ function MapPanel({
 
         const endName = normalizePlaceName(segment.endPoint)
         if (segment.endCoord) {
-          points.push({
-            name: endName,
-            lat: segment.endCoord.lat,
-            lon: segment.endCoord.lon,
-            type: 'end',
-          })
+          points.push({ name: endName, lat: segment.endCoord.lat, lon: segment.endCoord.lon, type: 'end' })
         } else if (geoMap[endName]) {
-          points.push({
-            name: endName,
-            lat: geoMap[endName].lat,
-            lon: geoMap[endName].lon,
-            type: 'end',
-          })
+          points.push({ name: endName, lat: geoMap[endName].lat, lon: geoMap[endName].lon, type: 'end' })
         }
 
-        const shouldHavePoints = 2 + splitViaPoints(segment.viaPointsText).length
-        if (points.length < shouldHavePoints) {
-          hasSkippedPoint = true
-        }
+        if (!points.length) continue
 
-        if (!points.length) {
-          continue
-        }
-
-        let line: LatLngExpression[] = points.map((point) => [point.lat, point.lon] as LatLngExpression)
+        let line: CoordPoint[] = points.map((point) => ({ lat: point.lat, lon: point.lon }))
 
         if (points.length >= 2) {
           const osrmLine = await fetchRoadPolyline(points)
           if (osrmLine?.length) {
-            line = osrmLine
+            line = osrmLine.map(([lat, lon]) => ({ lat, lon }))
           } else {
             hasOsrmFallback = true
           }
         }
 
-        const storedPoints = line.map((latlng) => {
-          const [lat, lon] = latlng as [number, number]
-          return { lat, lon }
-        })
-        pointsForParent[segment.id] = storedPoints
-
+        pointsForParent[segment.id] = line
         nextTracks.push({
           segmentId: segment.id,
           segmentName: segment.name,
@@ -256,15 +239,9 @@ function MapPanel({
       setLoading(false)
 
       const messageParts: string[] = []
-      if (!nextTracks.length) {
-        messageParts.push('未能解析有效地点，请检查起点/终点/途径点文本。')
-      }
-      if (hasSkippedPoint) {
-        messageParts.push('部分地点解析失败，已跳过不可用点位。')
-      }
-      if (hasOsrmFallback) {
-        messageParts.push('路网轨迹生成失败，已使用直线连接。')
-      }
+      if (!nextTracks.length) messageParts.push('未能解析有效地点，请检查起点/终点/途径点文本。')
+      if (hasSkippedPoint) messageParts.push('部分地点解析失败，已跳过不可用点位。')
+      if (hasOsrmFallback) messageParts.push('路网轨迹生成失败，已使用直线连接。')
 
       setMessage(messageParts.join(' '))
     }
@@ -283,72 +260,95 @@ function MapPanel({
 
   useEffect(() => {
     if (!editingTrack) {
-      setDraftStart(null)
-      setDraftEnd(null)
+      setDraftLine(null)
+      setOriginalLine(null)
+      setEditMode('start')
       return
     }
 
-    const start = editingTrack.points.find((point) => point.type === 'start')
-    const end = [...editingTrack.points].reverse().find((point) => point.type === 'end')
-    setDraftStart(start ? { lat: start.lat, lon: start.lon } : null)
-    setDraftEnd(end ? { lat: end.lat, lon: end.lon } : null)
-  }, [editingTrack])
+    if (!draftLine) {
+      const cloned = editingTrack.line.map((point) => ({ ...point }))
+      setDraftLine(cloned)
+      setOriginalLine(cloned.map((point) => ({ ...point })))
+    }
+  }, [editingTrack, draftLine])
 
   const displayedTracks = useMemo(() => {
-    if (!editingTrack || !draftStart || !draftEnd) return tracks
+    if (!editingTrack || !draftLine) return tracks
 
     return tracks.map((track) => {
       if (track.segmentId !== editingTrack.segmentId) return track
 
-      const mutableLine = [...track.line]
-      if (mutableLine.length >= 1) {
-        mutableLine[0] = [draftStart.lat, draftStart.lon]
-        mutableLine[mutableLine.length - 1] = [draftEnd.lat, draftEnd.lon]
-      }
-
-      const mutablePoints = track.points.map((point) => {
-        if (point.type === 'start') return { ...point, lat: draftStart.lat, lon: draftStart.lon }
-        if (point.type === 'end') return { ...point, lat: draftEnd.lat, lon: draftEnd.lon }
-        return point
+      const mutablePoints = track.points.map((point, index, arr) => {
+        if (!draftLine.length) return point
+        if (point.type === 'start') return { ...point, lat: draftLine[0].lat, lon: draftLine[0].lon }
+        if (point.type === 'end') {
+          const end = draftLine[draftLine.length - 1]
+          return { ...point, lat: end.lat, lon: end.lon }
+        }
+        const viaIndex = Math.floor(((index + 1) / (arr.length + 1)) * draftLine.length)
+        const via = draftLine[Math.min(Math.max(viaIndex, 1), draftLine.length - 2)]
+        return via ? { ...point, lat: via.lat, lon: via.lon } : point
       })
 
       return {
         ...track,
-        line: mutableLine,
+        line: draftLine,
         points: mutablePoints,
       }
     })
-  }, [tracks, editingTrack, draftStart, draftEnd])
+  }, [tracks, editingTrack, draftLine])
+
+  const controlPointIndices = useMemo(() => {
+    if (!draftLine || draftLine.length <= 2 || editMode !== 'track') return []
+
+    const indices: number[] = []
+    for (let i = 1; i < draftLine.length - 1; i += CONTROL_POINT_STEP) {
+      indices.push(i)
+      if (indices.length >= CONTROL_POINT_MAX) break
+    }
+
+    if (!indices.length) {
+      indices.push(Math.floor(draftLine.length / 2))
+    }
+
+    return indices
+  }, [draftLine, editMode])
 
   const allLatLng = useMemo(
     () =>
       displayedTracks.flatMap((track) =>
-        track.line.length ? track.line : track.points.map((point) => [point.lat, point.lon] as LatLngExpression),
+        track.line.length
+          ? toLatLng(track.line)
+          : track.points.map((point) => [point.lat, point.lon] as LatLngExpression),
       ),
     [displayedTracks],
   )
 
-  const handleSaveEdit = () => {
-    if (!editingTrack || !draftStart || !draftEnd) return
+  const handleCancel = () => {
+    if (originalLine) setDraftLine(originalLine.map((point) => ({ ...point })))
+    onCancelEdit()
+  }
 
-    const target = displayedTracks.find((track) => track.segmentId === editingTrack.segmentId)
-    if (!target || target.line.length < 2) return
+  const handleSave = () => {
+    if (!editingTrack || !draftLine || draftLine.length < 2) return
 
     onSaveEdit({
       segmentId: editingTrack.segmentId,
-      startCoord: { lat: draftStart.lat, lon: draftStart.lon },
-      endCoord: { lat: draftEnd.lat, lon: draftEnd.lon },
-      points: target.line.map((latlng) => {
-        const [lat, lon] = latlng as [number, number]
-        return { lat, lon }
-      }),
+      startCoord: { lat: draftLine[0].lat, lon: draftLine[0].lon },
+      endCoord: {
+        lat: draftLine[draftLine.length - 1].lat,
+        lon: draftLine[draftLine.length - 1].lon,
+      },
+      points: draftLine,
     })
+    setDraftLine(null)
+    setOriginalLine(null)
   }
 
   return (
     <section className="card-section map-section-with-toolbar">
       <h2>4) 地图轨迹</h2>
-
       {(loading || message) && <p className="hint-text">{loading ? '正在加载轨迹点位...' : message}</p>}
 
       <div className="map-toolbar">
@@ -364,12 +364,23 @@ function MapPanel({
           </button>
         ) : (
           <>
-            <button type="button" onClick={onCancelEdit}>
+            <button type="button" onClick={handleCancel}>
               取消
             </button>
-            <button type="button" onClick={handleSaveEdit}>
+            <button type="button" onClick={handleSave}>
               保存
             </button>
+            <div className="edit-mode-tabs">
+              <button type="button" className={editMode === 'start' ? 'active' : ''} onClick={() => setEditMode('start')}>
+                改起点
+              </button>
+              <button type="button" className={editMode === 'end' ? 'active' : ''} onClick={() => setEditMode('end')}>
+                改终点
+              </button>
+              <button type="button" className={editMode === 'track' ? 'active' : ''} onClick={() => setEditMode('track')}>
+                改轨迹
+              </button>
+            </div>
           </>
         )}
       </div>
@@ -383,52 +394,85 @@ function MapPanel({
 
           {displayedTracks.map((track) =>
             track.line.length >= 2 ? (
-              <Polyline key={track.segmentId} positions={track.line} color="#2563eb" weight={4} />
+              <Polyline key={track.segmentId} positions={toLatLng(track.line)} color="#2563eb" weight={4} />
             ) : null,
           )}
 
           {displayedTracks.flatMap((track) =>
             track.points.map((point, index) => {
-              const isEditable = editingSegmentId === track.segmentId && (point.type === 'start' || point.type === 'end')
+              const draggable =
+                editingSegmentId === track.segmentId &&
+                ((editMode === 'start' && point.type === 'start') || (editMode === 'end' && point.type === 'end'))
+
               return (
                 <Marker
                   key={`${track.segmentId}-${point.name}-${index}`}
                   position={[point.lat, point.lon]}
                   icon={pointIcons[point.type]}
-                  draggable={isEditable}
+                  draggable={draggable}
                   eventHandlers={
-                    isEditable
+                    draggable && draftLine
                       ? {
                           drag: (event) => {
                             const latlng = event.target.getLatLng()
-                            if (point.type === 'start') {
-                              setDraftStart({ lat: latlng.lat, lon: latlng.lng })
-                            } else {
-                              setDraftEnd({ lat: latlng.lat, lon: latlng.lng })
-                            }
+                            setDraftLine((prev) => {
+                              if (!prev || !prev.length) return prev
+                              const next = [...prev]
+                              if (point.type === 'start') {
+                                next[0] = { ...next[0], lat: latlng.lat, lon: latlng.lng }
+                              }
+                              if (point.type === 'end') {
+                                next[next.length - 1] = {
+                                  ...next[next.length - 1],
+                                  lat: latlng.lat,
+                                  lon: latlng.lng,
+                                }
+                              }
+                              return next
+                            })
                           },
                         }
                       : undefined
                   }
                 >
                   <Popup>
-                    <div>
-                      <strong>{track.segmentName}</strong>
-                      <br />
-                      {point.type === 'start' && '起点'}
-                      {point.type === 'end' && '终点'}
-                      {point.type === 'via' && '途径点'}
-                      ：{point.name}
-                    </div>
+                    {track.segmentName} · {point.type === 'start' ? '起点' : point.type === 'end' ? '终点' : '途径点'}
                   </Popup>
                 </Marker>
               )
             }),
           )}
 
-          {selectedWaypoint ? (
+          {editingSegmentId && draftLine &&
+            controlPointIndices.map((index) => {
+              const point = draftLine[index]
+              if (!point) return null
+              return (
+                <Marker
+                  key={`control-${index}`}
+                  position={[point.lat, point.lon]}
+                  icon={controlPointIcon}
+                  draggable
+                  eventHandlers={{
+                    drag: (event) => {
+                      const latlng = event.target.getLatLng()
+                      setDraftLine((prev) => {
+                        if (!prev) return prev
+                        const next = [...prev]
+                        next[index] = { ...next[index], lat: latlng.lat, lon: latlng.lng }
+                        return next
+                      })
+                    },
+                  }}
+                >
+                  <Popup>轨迹控制点</Popup>
+                </Marker>
+              )
+            })}
+
+          {selectedWaypoint && typeof selectedWaypoint.lat === 'number' && typeof selectedWaypoint.lon === 'number' ? (
             <Marker position={[selectedWaypoint.lat, selectedWaypoint.lon]} icon={selectedWaypointIcon}>
-              <Popup>已定位到所选途经点</Popup>
+              <Popup>{selectedWaypoint.name || '已定位途经点'}</Popup>
             </Marker>
           ) : null}
 

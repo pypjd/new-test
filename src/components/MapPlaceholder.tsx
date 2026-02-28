@@ -1,16 +1,10 @@
-import type { RouteSegment, RouteSummary } from '../types/trip'
+import PlaceAutocomplete from './PlaceAutocomplete'
+import type { RouteSegment, RouteSummary, Waypoint } from '../types/trip'
 
 interface FilterContext {
   tripName: string
   dayDate: string
   segmentName: string
-}
-
-interface WaypointItem {
-  id: string
-  lat: number
-  lon: number
-  timestamp?: string
 }
 
 interface MapPlaceholderProps {
@@ -20,11 +14,20 @@ interface MapPlaceholderProps {
   editingSegmentId: string | null
   activeSegmentId: string | null
   onEditSegment: (segmentId: string) => void
-  waypoints: WaypointItem[]
-  onLocateWaypoint: (waypoint: WaypointItem) => void
+  waypoints: Waypoint[]
+  onLocateWaypoint: (waypoint: Waypoint) => void
+  waypointEditMode: boolean
+  onStartWaypointEdit: () => void
+  onCancelWaypointEdit: () => void
+  onSaveWaypoints: () => void
+  onAddWaypoint: () => void
+  onUpdateWaypointName: (id: string, name: string) => void
+  onSelectWaypointPlace: (id: string, payload: { label: string; lat: number; lon: number }) => void
+  onMoveWaypoint: (id: string, direction: 'up' | 'down') => void
+  onDeleteWaypoint: (id: string) => void
 }
 
-// 地图占位组件：展示筛选结果、路线级编辑入口和途经点列表。
+// 地图占位组件：展示筛选结果、路线级编辑入口与可编辑途经点。
 function MapPlaceholder({
   filteredSegments,
   summary,
@@ -34,6 +37,15 @@ function MapPlaceholder({
   onEditSegment,
   waypoints,
   onLocateWaypoint,
+  waypointEditMode,
+  onStartWaypointEdit,
+  onCancelWaypointEdit,
+  onSaveWaypoints,
+  onAddWaypoint,
+  onUpdateWaypointName,
+  onSelectWaypointPlace,
+  onMoveWaypoint,
+  onDeleteWaypoint,
 }: MapPlaceholderProps) {
   return (
     <section className="card-section">
@@ -64,16 +76,80 @@ function MapPlaceholder({
       <div className="waypoint-section">
         <p>途经点（Waypoints）</p>
         <p>途经点数量：{waypoints.length}</p>
+
+        {!waypointEditMode ? (
+          <button type="button" onClick={onStartWaypointEdit} disabled={!activeSegmentId}>
+            编辑途经点
+          </button>
+        ) : (
+          <div className="waypoint-actions">
+            <button type="button" onClick={onAddWaypoint}>
+              + 添加途经点
+            </button>
+            <button type="button" onClick={onSaveWaypoints}>
+              保存途经点
+            </button>
+            <button type="button" onClick={onCancelWaypointEdit}>
+              取消
+            </button>
+          </div>
+        )}
+
         <ul className="waypoint-list">
           {waypoints.map((waypoint, index) => (
-            <li key={waypoint.id}>
-              <span>
-                #{index + 1} {waypoint.lat.toFixed(6)}, {waypoint.lon.toFixed(6)}
-                {waypoint.timestamp ? ` · ${waypoint.timestamp}` : ''}
-              </span>
-              <button type="button" onClick={() => onLocateWaypoint(waypoint)}>
-                定位
-              </button>
+            <li key={waypoint.id} className="waypoint-item">
+              <span>#{index + 1}</span>
+
+              {waypointEditMode ? (
+                <PlaceAutocomplete
+                  valueText={waypoint.name}
+                  onValueTextChange={(text) => onUpdateWaypointName(waypoint.id, text)}
+                  onSelect={(result) => {
+                    onSelectWaypointPlace(waypoint.id, {
+                      label: result.label,
+                      lat: result.lat,
+                      lon: result.lon,
+                    })
+                  }}
+                  placeholder="输入地名并选择候选"
+                />
+              ) : (
+                <span>
+                  {waypoint.name || '未命名途经点'}
+                  {typeof waypoint.lat === 'number' && typeof waypoint.lon === 'number'
+                    ? `（${waypoint.lat.toFixed(6)}, ${waypoint.lon.toFixed(6)}）`
+                    : '（未解析坐标）'}
+                  {waypoint.timestamp ? ` · ${waypoint.timestamp}` : ''}
+                </span>
+              )}
+
+              <div className="waypoint-buttons">
+                <button type="button" onClick={() => onMoveWaypoint(waypoint.id, 'up')} disabled={!waypointEditMode}>
+                  上移
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onMoveWaypoint(waypoint.id, 'down')}
+                  disabled={!waypointEditMode}
+                >
+                  下移
+                </button>
+                <button type="button" onClick={() => onDeleteWaypoint(waypoint.id)} disabled={!waypointEditMode}>
+                  删除
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof waypoint.lat !== 'number' || typeof waypoint.lon !== 'number') {
+                      window.alert('未解析坐标，请先选择搜索结果。')
+                      return
+                    }
+                    onLocateWaypoint(waypoint)
+                  }}
+                >
+                  定位
+                </button>
+              </div>
             </li>
           ))}
         </ul>
