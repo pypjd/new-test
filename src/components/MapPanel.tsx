@@ -4,7 +4,7 @@ import L, { type DivIcon, type LatLngExpression } from 'leaflet'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
-import type { CoordPoint, FilterState, RouteSegment, Waypoint } from '../types/trip'
+import type { CoordPoint, RouteSegment, Waypoint } from '../types/trip'
 import { planDrivingRoute, searchAmapInputTips } from '../services/amap'
 
 interface EndpointDraft {
@@ -17,7 +17,6 @@ interface EndpointDraft {
 
 interface MapPanelProps {
   filteredSegments: RouteSegment[]
-  filters: FilterState
   editingSegmentId: string | null
   onStartEdit: (segmentId: string) => void
   onCancelEdit: () => void
@@ -53,6 +52,11 @@ interface ViewportControllerProps {
 
 interface WaypointFocusControllerProps {
   waypoint: Waypoint | null
+}
+
+
+interface MapResizeControllerProps {
+  expanded: boolean
 }
 
 const defaultCenter: [number, number] = [35.8617, 104.1954]
@@ -115,6 +119,24 @@ function ViewportController({ points }: ViewportControllerProps) {
   return null
 }
 
+
+function MapResizeController({ expanded }: MapResizeControllerProps) {
+  const map = useMap()
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => map.invalidateSize(), 80)
+    return () => window.clearTimeout(timer)
+  }, [map, expanded])
+
+  useEffect(() => {
+    const handleResize = () => map.invalidateSize()
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [map])
+
+  return null
+}
+
 function WaypointFocusController({ waypoint }: WaypointFocusControllerProps) {
   const map = useMap()
 
@@ -143,7 +165,6 @@ async function resolvePointByName(placeName: string): Promise<{ lat: number; lon
 
 function MapPanel({
   filteredSegments,
-  filters,
   editingSegmentId,
   onStartEdit,
   onCancelEdit,
@@ -156,23 +177,28 @@ function MapPanel({
   const [tracks, setTracks] = useState<SegmentTrack[]>([])
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('请选择旅程/日期/路段以查看轨迹')
+  const [mapExpanded, setMapExpanded] = useState(false)
   const [editMode, setEditMode] = useState<EditMode>('start')
   const [draftLine, setDraftLine] = useState<CoordPoint[] | null>(null)
   const [originalLine, setOriginalLine] = useState<CoordPoint[] | null>(null)
 
-  const shouldPromptSelectMore = Boolean(filters.tripId && !filters.dayId && !filters.segmentId)
+  const segmentsToShow = useMemo(() => filteredSegments, [filteredSegments])
 
   useEffect(() => {
     let active = true
 
     async function buildTracks() {
-      if (!filteredSegments.length || shouldPromptSelectMore) {
+      if (!segmentsToShow.length) {
         setTracks([])
         setLoading(false)
         setMessage('请选择旅程/日期/路段以查看轨迹')
         onTracksComputed({})
         return
       }
+
+      // 筛选范围变化时先清空旧线，避免异步请求期间旧轨迹残留。
+      setTracks([])
+      onTracksComputed({})
 
       setLoading(true)
       setMessage('正在通过高德加载路线...')
@@ -181,7 +207,7 @@ function MapPanel({
       const pointsForParent: Record<string, CoordPoint[]> = {}
       const warnings: string[] = []
 
-      for (const segment of filteredSegments) {
+      for (const segment of segmentsToShow) {
         const segmentEndpointDraft = endpointDraft?.segmentId === segment.id ? endpointDraft : null
 
         const startName = segmentEndpointDraft?.startPoint ?? segment.startPoint
@@ -253,7 +279,7 @@ function MapPanel({
     return () => {
       active = false
     }
-  }, [filteredSegments, shouldPromptSelectMore, onTracksComputed, endpointDraft])
+  }, [segmentsToShow, onTracksComputed, endpointDraft])
 
   const editingTrack = useMemo(
     () => (editingSegmentId ? tracks.find((track) => track.segmentId === editingSegmentId) ?? null : null),
@@ -344,6 +370,10 @@ function MapPanel({
       {(loading || message) && <p className="hint-text">{loading ? '正在加载轨迹点位...' : message}</p>}
 
       <div className="map-toolbar">
+        <button type="button" onClick={() => setMapExpanded((prev) => !prev)}>
+          {mapExpanded ? '收起地图' : '展开地图'}
+        </button>
+
         {!editingSegmentId ? (
           <button
             type="button"
@@ -378,7 +408,8 @@ function MapPanel({
       </div>
 
       <div className="map-panel-wrapper">
-        <MapContainer center={defaultCenter} zoom={4} className="map-container">
+        <MapContainer center={defaultCenter} zoom={4} className={`map-container ${mapExpanded ? 'map-container-expanded' : ''}`}>
+          <MapResizeController expanded={mapExpanded} />
           <TileLayer
             attribution='&copy; <a href="https://www.amap.com/">Amap</a>'
             url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"

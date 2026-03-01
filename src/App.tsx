@@ -367,7 +367,6 @@ function App() {
 
       <MapPanel
         filteredSegments={filteredSegments}
-        filters={filters}
         editingSegmentId={editingSegmentId}
         onStartEdit={(segmentId) => setEditingSegmentId(segmentId)}
         onCancelEdit={() => setEditingSegmentId(null)}

@@ -74,15 +74,25 @@ select:disabled {
 
 .map-container {
   width: 100%;
-  height: 460px;
+  height: 70vh;
+  min-height: 650px;
   border-radius: 10px;
   overflow: hidden;
   border: 1px solid #d1d5db;
 }
 
+.map-container-expanded {
+  height: 85vh;
+}
+
 @media (max-width: 768px) {
   .map-container {
-    height: 420px;
+    height: 70vh;
+    min-height: 540px;
+  }
+
+  .map-container-expanded {
+    height: 85vh;
   }
 }
 
