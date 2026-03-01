@@ -422,9 +422,9 @@ function MapPanel({
       <div className="map-panel-wrapper">
         <MapContainer
           center={defaultCenter}
-          zoom={4}
-          zoomSnap={0.25}
-          zoomDelta={0.25}
+          zoom={2}
+          zoomSnap={0.5}
+          zoomDelta={0.5}
           wheelPxPerZoomLevel={160}
           className={`map-container ${mapExpanded ? 'map-container-expanded' : ''}`}
         >
