@@ -420,7 +420,14 @@ function MapPanel({
       </div>
 
       <div className="map-panel-wrapper">
-        <MapContainer center={defaultCenter} zoom={4} className={`map-container ${mapExpanded ? 'map-container-expanded' : ''}`}>
+        <MapContainer
+          center={defaultCenter}
+          zoom={4}
+          zoomSnap={0.25}
+          zoomDelta={0.25}
+          wheelPxPerZoomLevel={160}
+          className={`map-container ${mapExpanded ? 'map-container-expanded' : ''}`}
+        >
           <MapResizeController expanded={mapExpanded} />
           <TileLayer
             attribution='&copy; <a href="https://www.amap.com/">Amap</a>'
