@@ -229,3 +229,20 @@ select:disabled {
 .custom-point-icon.waypoint-selected {
   background: #f59e0b;
 }
+
+
+.route-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.danger-btn {
+  border: 1px solid #dc2626;
+  color: #dc2626;
+  background: #fff;
+}
+
+.danger-btn:hover {
+  background: #fef2f2;
+}

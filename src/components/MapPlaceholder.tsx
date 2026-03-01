@@ -22,6 +22,7 @@ interface MapPlaceholderProps {
   editingSegmentId: string | null
   activeSegmentId: string | null
   onEditSegment: (segmentId: string) => void
+  onDeleteSegment: (payload: { segmentId?: string; index: number; name: string }) => void
 
   routeType: RoutePreference
   onChangeRouteType: (value: RoutePreference) => void
@@ -55,6 +56,7 @@ function MapPlaceholder({
   editingSegmentId,
   activeSegmentId,
   onEditSegment,
+  onDeleteSegment,
   routeType,
   onChangeRouteType,
   waypoints,
@@ -101,12 +103,21 @@ function MapPlaceholder({
 
       <p>路段名称列表：</p>
       <ul className="route-list">
-        {filteredSegments.map((segment) => (
+        {filteredSegments.map((segment, index) => (
           <li key={segment.id} className={segment.id === activeSegmentId ? 'active' : ''}>
             <span>{segment.name}</span>
-            <button type="button" onClick={() => onEditSegment(segment.id)}>
-              {editingSegmentId === segment.id ? '编辑中' : '编辑轨迹'}
-            </button>
+            <div className="route-actions">
+              <button type="button" onClick={() => onEditSegment(segment.id)}>
+                {editingSegmentId === segment.id ? '编辑中' : '编辑轨迹'}
+              </button>
+              <button
+                type="button"
+                className="danger-btn"
+                onClick={() => onDeleteSegment({ segmentId: segment.id, index, name: segment.name })}
+              >
+                删除
+              </button>
+            </div>
           </li>
         ))}
       </ul>

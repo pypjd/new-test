@@ -220,6 +220,51 @@ function App() {
     setEndpointDraft(null)
   }
 
+  const deleteSegment = (payload: { segmentId?: string; index: number; name: string }) => {
+    const confirmed = window.confirm(`确定删除“${payload.name}”这段路段吗？此操作不可恢复。`)
+    if (!confirmed) return
+
+    const fallbackSegment = filteredSegments[payload.index]
+
+    setTripReview((prev) => ({
+      trips: prev.trips.map((trip) => ({
+        ...trip,
+        days: trip.days.map((day) => {
+          let fallbackUsed = false
+          const nextRouteSegments = day.routeSegments.filter((segment) => {
+            if (payload.segmentId && segment.id) return segment.id !== payload.segmentId
+            if (!fallbackSegment) return true
+            if (!fallbackUsed && segment === fallbackSegment) {
+              fallbackUsed = true
+              return false
+            }
+            return true
+          })
+          return { ...day, routeSegments: nextRouteSegments }
+        }),
+      })),
+    }))
+
+    const targetId = payload.segmentId ?? fallbackSegment?.id ?? null
+
+    if (targetId && editingSegmentId === targetId) {
+      // 删除正在编辑的路段后，必须退出编辑态，避免地图继续持有无效草稿。
+      setEditingSegmentId(null)
+    }
+
+    if (targetId && editingWaypointSegmentId === targetId) {
+      // 删除路段后清空途经点编辑草稿，避免继续编辑已不存在的数据。
+      setEditingWaypointSegmentId(null)
+      setWaypointDrafts([])
+      setSelectedWaypointId(null)
+    }
+
+    if (targetId && editingEndpointsSegmentId === targetId) {
+      setEditingEndpointsSegmentId(null)
+      setEndpointDraft(null)
+    }
+  }
+
   const routeTypeValue = activeSegment?.preference ?? 'HIGHWAY_FIRST'
 
   return (
@@ -237,6 +282,7 @@ function App() {
         editingSegmentId={editingSegmentId}
         activeSegmentId={activeSegmentId}
         onEditSegment={(segmentId) => setEditingSegmentId(segmentId)}
+        onDeleteSegment={deleteSegment}
         routeType={routeTypeValue}
         onChangeRouteType={(value) => {
           if (!activeSegmentId) return
