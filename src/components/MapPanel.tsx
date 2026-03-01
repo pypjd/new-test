@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, Marker, Popup, Polyline, TileLayer, useMap } from 'react-leaflet'
 import L, { type DivIcon, type LatLngExpression } from 'leaflet'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
@@ -181,11 +181,13 @@ function MapPanel({
   const [editMode, setEditMode] = useState<EditMode>('start')
   const [draftLine, setDraftLine] = useState<CoordPoint[] | null>(null)
   const [originalLine, setOriginalLine] = useState<CoordPoint[] | null>(null)
+  const buildRunIdRef = useRef(0)
 
   const segmentsToShow = useMemo(() => filteredSegments, [filteredSegments])
 
   useEffect(() => {
     let active = true
+    const runId = ++buildRunIdRef.current
 
     async function buildTracks() {
       if (!segmentsToShow.length) {
@@ -203,74 +205,84 @@ function MapPanel({
       setLoading(true)
       setMessage('正在通过高德加载路线...')
 
-      const nextTracks: SegmentTrack[] = []
       const pointsForParent: Record<string, CoordPoint[]> = {}
       const warnings: string[] = []
+      const partialTracks: Array<SegmentTrack | null> = new Array(segmentsToShow.length).fill(null)
 
-      for (const segment of segmentsToShow) {
-        const segmentEndpointDraft = endpointDraft?.segmentId === segment.id ? endpointDraft : null
+      const tasks = segmentsToShow.map((segment, index) =>
+        (async () => {
+          const segmentEndpointDraft = endpointDraft?.segmentId === segment.id ? endpointDraft : null
 
-        const startName = segmentEndpointDraft?.startPoint ?? segment.startPoint
-        const endName = segmentEndpointDraft?.endPoint ?? segment.endPoint
+          const startName = segmentEndpointDraft?.startPoint ?? segment.startPoint
+          const endName = segmentEndpointDraft?.endPoint ?? segment.endPoint
 
-        let startCoord = segmentEndpointDraft?.startCoord ?? segment.startCoord
-        let endCoord = segmentEndpointDraft?.endCoord ?? segment.endCoord
+          let startCoord = segmentEndpointDraft?.startCoord ?? segment.startCoord
+          let endCoord = segmentEndpointDraft?.endCoord ?? segment.endCoord
 
-        if (!startCoord && startName) {
-          const resolved = await resolvePointByName(startName)
-          if (resolved) startCoord = resolved
-        }
-        if (!endCoord && endName) {
-          const resolved = await resolvePointByName(endName)
-          if (resolved) endCoord = resolved
-        }
+          if (!startCoord && startName) {
+            const resolved = await resolvePointByName(startName)
+            if (resolved) startCoord = resolved
+          }
+          if (!endCoord && endName) {
+            const resolved = await resolvePointByName(endName)
+            if (resolved) endCoord = resolved
+          }
 
-        const resolvedWaypoints = (segment.waypoints ?? []).filter(
-          (point): point is Waypoint & { lat: number; lng: number } =>
-            typeof point.lat === 'number' && typeof point.lng === 'number',
-        )
+          const resolvedWaypoints = (segment.waypoints ?? []).filter(
+            (point): point is Waypoint & { lat: number; lng: number } =>
+              typeof point.lat === 'number' && typeof point.lng === 'number',
+          )
 
-        const markerPoints: Array<{ name: string; lat: number; lon: number; type: PointKind }> = []
-        if (startCoord) markerPoints.push({ name: startName, lat: startCoord.lat, lon: startCoord.lon, type: 'start' })
-        for (const waypoint of resolvedWaypoints) {
-          markerPoints.push({ name: waypoint.name, lat: waypoint.lat, lon: waypoint.lng, type: 'via' })
-        }
-        if (endCoord) markerPoints.push({ name: endName, lat: endCoord.lat, lon: endCoord.lon, type: 'end' })
+          const markerPoints: Array<{ name: string; lat: number; lon: number; type: PointKind }> = []
+          if (startCoord) markerPoints.push({ name: startName, lat: startCoord.lat, lon: startCoord.lon, type: 'start' })
+          for (const waypoint of resolvedWaypoints) {
+            markerPoints.push({ name: waypoint.name, lat: waypoint.lat, lon: waypoint.lng, type: 'via' })
+          }
+          if (endCoord) markerPoints.push({ name: endName, lat: endCoord.lat, lon: endCoord.lon, type: 'end' })
 
-        if (markerPoints.length < 2) {
-          warnings.push(`路段「${segment.name}」缺少可用起终点坐标，无法规划。`)
-          continue
-        }
+          if (markerPoints.length < 2) {
+            warnings.push(`路段「${segment.name}」缺少可用起终点坐标，无法规划。`)
+            return
+          }
 
-        const drivingPoints = markerPoints.map((point) => ({ lat: point.lat, lng: point.lon }))
-        const { route, error } = await planDrivingRoute(drivingPoints, segment.preference)
+          const drivingPoints = markerPoints.map((point) => ({ lat: point.lat, lng: point.lon }))
+          const { route, error } = await planDrivingRoute(drivingPoints, segment.preference)
 
-        let line = fallbackLineFromPoints(markerPoints)
-        if (route?.polyline?.length) {
-          line = route.polyline.map(([lat, lng]) => ({ lat, lon: lng }))
-        } else {
-          const reason = error?.message ?? '未知错误'
-          warnings.push(`路段「${segment.name}」规划失败：${reason}，已降级为直线连接。`)
-        }
+          let line = fallbackLineFromPoints(markerPoints)
+          if (route?.polyline?.length) {
+            line = route.polyline.map(([lat, lng]) => ({ lat, lon: lng }))
+          } else {
+            const reason = error?.message ?? '未知错误'
+            warnings.push(`路段「${segment.name}」规划失败：${reason}，已降级为直线连接。`)
+          }
 
-        pointsForParent[segment.id] = line
-        nextTracks.push({
-          segmentId: segment.id,
-          segmentName: segment.name,
-          points: markerPoints,
-          line,
-        })
-      }
+          if (!active || runId !== buildRunIdRef.current) return
 
-      if (!active) return
+          pointsForParent[segment.id] = line
+          partialTracks[index] = {
+            segmentId: segment.id,
+            segmentName: segment.name,
+            points: markerPoints,
+            line,
+          }
 
-      setTracks(nextTracks)
-      onTracksComputed(pointsForParent)
+          const visibleTracks = partialTracks.filter((track): track is SegmentTrack => Boolean(track))
+          setTracks(visibleTracks)
+          onTracksComputed({ ...pointsForParent })
+        })(),
+      )
+
+      await Promise.allSettled(tasks)
+      if (!active || runId !== buildRunIdRef.current) return
+
       setLoading(false)
-      if (!nextTracks.length) {
+
+      const finalTracks = partialTracks.filter((track): track is SegmentTrack => Boolean(track))
+      if (!finalTracks.length) {
         setMessage('未解析出可展示路线，请检查起点/终点和途经点是否已选择候选。')
         return
       }
+
       setMessage(warnings.length ? warnings.join(' ') : '已加载高德路线。')
     }
 

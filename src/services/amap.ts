@@ -3,6 +3,9 @@ import type { RoutePreference } from '../types/trip'
 const AMAP_INPUT_TIPS_URL = 'https://restapi.amap.com/v3/assistant/inputtips'
 const AMAP_DRIVING_URL = 'https://restapi.amap.com/v3/direction/driving'
 
+const ROUTE_QUEUE_CONCURRENCY = 2
+const ROUTE_REQUEST_DELAY_MS = 200
+
 export interface AMapTip {
   id?: string
   name: string
@@ -29,12 +32,24 @@ export interface DrivingRouteResult {
   polyline: Array<[number, number]>
   distanceText: string
   durationText: string
+  routeKey: string
+  fromCache?: boolean
 }
 
 export interface AMapServiceError {
   code?: string
   message: string
 }
+
+type RouteTask = {
+  run: () => Promise<DrivingRouteResult>
+  resolve: (value: DrivingRouteResult) => void
+  reject: (reason?: unknown) => void
+}
+
+const routeCache = new Map<string, DrivingRouteResult>()
+const routeTaskQueue: RouteTask[] = []
+let activeRouteTasks = 0
 
 function getAmapKey(): string {
   const key = import.meta.env.VITE_AMAP_KEY
@@ -63,6 +78,125 @@ function preferenceToStrategy(preference: RoutePreference): string {
 
 function ensureKey(): AMapServiceError | null {
   return getAmapKey() ? null : { code: 'NO_KEY', message: '未配置 VITE_AMAP_KEY，无法调用高德 API。' }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+function processRouteQueue() {
+  while (activeRouteTasks < ROUTE_QUEUE_CONCURRENCY && routeTaskQueue.length) {
+    const nextTask = routeTaskQueue.shift()
+    if (!nextTask) return
+
+    activeRouteTasks += 1
+    void nextTask
+      .run()
+      .then(nextTask.resolve)
+      .catch(nextTask.reject)
+      .finally(() => {
+        activeRouteTasks -= 1
+        processRouteQueue()
+      })
+  }
+}
+
+function enqueueRouteTask(run: () => Promise<DrivingRouteResult>): Promise<DrivingRouteResult> {
+  return new Promise<DrivingRouteResult>((resolve, reject) => {
+    routeTaskQueue.push({ run, resolve, reject })
+    processRouteQueue()
+  })
+}
+
+function buildRouteKey(points: DrivingRequestPoint[], preference: RoutePreference): string {
+  const origin = toLonLatText(points[0])
+  const destination = toLonLatText(points[points.length - 1])
+  const via = points.length > 2 ? points.slice(1, -1).map(toLonLatText).join(';') : ''
+  const strategy = preferenceToStrategy(preference)
+  return `${origin}|${destination}|${via}|${strategy}`
+}
+
+async function planDrivingRouteRaw(
+  points: DrivingRequestPoint[],
+  preference: RoutePreference,
+  routeKey: string,
+): Promise<{ route: DrivingRouteResult | null; error: AMapServiceError | null }> {
+  const keyError = ensureKey()
+  if (keyError) return { route: null, error: keyError }
+  if (points.length < 2) return { route: null, error: { code: 'POINTS_NOT_ENOUGH', message: '路径规划至少需要起点和终点。' } }
+
+  const url = new URL(AMAP_DRIVING_URL)
+  url.searchParams.set('key', getAmapKey())
+  url.searchParams.set('origin', toLonLatText(points[0]))
+  url.searchParams.set('destination', toLonLatText(points[points.length - 1]))
+  if (points.length > 2) {
+    const waypoints = points.slice(1, -1).map(toLonLatText).join(';')
+    if (waypoints) url.searchParams.set('waypoints', waypoints)
+  }
+  url.searchParams.set('strategy', preferenceToStrategy(preference))
+  url.searchParams.set('extensions', 'base')
+
+  try {
+    const response = await fetch(url.toString())
+    if (!response.ok) {
+      return {
+        route: null,
+        error: { code: String(response.status), message: `高德驾车规划失败（HTTP ${response.status}）。` },
+      }
+    }
+
+    const data = (await response.json()) as {
+      status?: string
+      info?: string
+      infocode?: string
+      route?: {
+        paths?: Array<{
+          distance?: string
+          duration?: string
+          steps?: Array<{ polyline?: string }>
+        }>
+      }
+    }
+
+    if (data.status !== '1') {
+      return {
+        route: null,
+        error: { code: data.infocode, message: `高德驾车规划失败：${data.info ?? '未知错误'}` },
+      }
+    }
+
+    const path = data.route?.paths?.[0]
+    if (!path) {
+      return { route: null, error: { code: 'NO_PATH', message: '高德未返回可用路线。' } }
+    }
+
+    const pointsList: Array<[number, number]> = []
+    for (const step of path.steps ?? []) {
+      if (!step.polyline) continue
+      for (const rawPair of step.polyline.split(';')) {
+        const parsed = parseLocationText(rawPair)
+        if (parsed) pointsList.push([parsed.lat, parsed.lng])
+      }
+    }
+
+    if (!pointsList.length) {
+      return { route: null, error: { code: 'EMPTY_POLYLINE', message: '高德返回路线为空。' } }
+    }
+
+    const result: DrivingRouteResult = {
+      polyline: pointsList,
+      distanceText: path.distance ? `${path.distance} 米` : '未知',
+      durationText: path.duration ? `${path.duration} 秒` : '未知',
+      routeKey,
+    }
+
+    return { route: result, error: null }
+  } catch {
+    return {
+      route: null,
+      error: { message: '高德驾车规划请求失败，请检查网络或稍后重试。' },
+    }
+  }
 }
 
 export async function searchAmapInputTips(
@@ -133,80 +267,29 @@ export async function planDrivingRoute(
   points: DrivingRequestPoint[],
   preference: RoutePreference,
 ): Promise<{ route: DrivingRouteResult | null; error: AMapServiceError | null }> {
-  const keyError = ensureKey()
-  if (keyError) return { route: null, error: keyError }
-  if (points.length < 2) return { route: null, error: { code: 'POINTS_NOT_ENOUGH', message: '路径规划至少需要起点和终点。' } }
-
-  const url = new URL(AMAP_DRIVING_URL)
-  url.searchParams.set('key', getAmapKey())
-  url.searchParams.set('origin', toLonLatText(points[0]))
-  url.searchParams.set('destination', toLonLatText(points[points.length - 1]))
-  if (points.length > 2) {
-    const waypoints = points.slice(1, -1).map(toLonLatText).join(';')
-    if (waypoints) url.searchParams.set('waypoints', waypoints)
-  }
-  url.searchParams.set('strategy', preferenceToStrategy(preference))
-  url.searchParams.set('extensions', 'base')
-
-  try {
-    const response = await fetch(url.toString())
-    if (!response.ok) {
-      return {
-        route: null,
-        error: { code: String(response.status), message: `高德驾车规划失败（HTTP ${response.status}）。` },
-      }
-    }
-
-    const data = (await response.json()) as {
-      status?: string
-      info?: string
-      infocode?: string
-      route?: {
-        paths?: Array<{
-          distance?: string
-          duration?: string
-          steps?: Array<{ polyline?: string }>
-        }>
-      }
-    }
-
-    if (data.status !== '1') {
-      return {
-        route: null,
-        error: { code: data.infocode, message: `高德驾车规划失败：${data.info ?? '未知错误'}` },
-      }
-    }
-
-    const path = data.route?.paths?.[0]
-    if (!path) {
-      return { route: null, error: { code: 'NO_PATH', message: '高德未返回可用路线。' } }
-    }
-
-    const pointsList: Array<[number, number]> = []
-    for (const step of path.steps ?? []) {
-      if (!step.polyline) continue
-      for (const rawPair of step.polyline.split(';')) {
-        const parsed = parseLocationText(rawPair)
-        if (parsed) pointsList.push([parsed.lat, parsed.lng])
-      }
-    }
-
-    if (!pointsList.length) {
-      return { route: null, error: { code: 'EMPTY_POLYLINE', message: '高德返回路线为空。' } }
-    }
-
+  const routeKey = buildRouteKey(points, preference)
+  const cached = routeCache.get(routeKey)
+  if (cached) {
     return {
-      route: {
-        polyline: pointsList,
-        distanceText: path.distance ? `${path.distance} 米` : '未知',
-        durationText: path.duration ? `${path.duration} 秒` : '未知',
-      },
+      route: { ...cached, fromCache: true },
       error: null,
     }
-  } catch {
-    return {
-      route: null,
-      error: { message: '高德驾车规划请求失败，请检查网络或稍后重试。' },
-    }
   }
+
+  const result = await enqueueRouteTask(async () => {
+    await sleep(ROUTE_REQUEST_DELAY_MS)
+    const { route, error } = await planDrivingRouteRaw(points, preference, routeKey)
+    if (!route || error) {
+      throw error ?? { message: '驾车规划失败' }
+    }
+    return route
+  })
+    .then((route) => ({ route, error: null as AMapServiceError | null }))
+    .catch((error: AMapServiceError) => ({ route: null, error }))
+
+  if (result.route) {
+    routeCache.set(routeKey, result.route)
+  }
+
+  return result
 }
