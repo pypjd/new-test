@@ -425,7 +425,7 @@ function MapPanel({
           zoom={2}
           zoomSnap={0.5}
           zoomDelta={0.5}
-          wheelPxPerZoomLevel={160}
+          wheelPxPerZoomLevel={120}
           className={`map-container ${mapExpanded ? 'map-container-expanded' : ''}`}
         >
           <MapResizeController expanded={mapExpanded} />
