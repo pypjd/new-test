@@ -157,7 +157,7 @@ function fallbackLineFromPoints(points: Array<{ lat: number; lon: number }>): Co
 }
 
 async function resolvePointByName(placeName: string): Promise<{ lat: number; lon: number } | null> {
-  const { tips } = await searchAmapInputTips(placeName)
+  const { tips } = await searchAmapInputTips({ keywords: placeName, citylimit: false })
   const first = tips[0]
   if (!first) return null
   return { lat: first.lat, lon: first.lng }
@@ -422,10 +422,10 @@ function MapPanel({
       <div className="map-panel-wrapper">
         <MapContainer
           center={defaultCenter}
-          zoom={2}
-          zoomSnap={0.5}
-          zoomDelta={0.5}
-          wheelPxPerZoomLevel={120}
+          zoom={4}
+          zoomSnap={0.25}
+          zoomDelta={0.25}
+          wheelPxPerZoomLevel={160}
           className={`map-container ${mapExpanded ? 'map-container-expanded' : ''}`}
         >
           <MapResizeController expanded={mapExpanded} />

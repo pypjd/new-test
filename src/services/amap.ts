@@ -1,6 +1,5 @@
 import type { RoutePreference } from '../types/trip'
 
-const AMAP_INPUT_TIPS_URL = 'https://restapi.amap.com/v3/assistant/inputtips'
 const AMAP_DRIVING_URL = 'https://restapi.amap.com/v3/direction/driving'
 
 const ROUTE_QUEUE_CONCURRENCY = 2
@@ -12,7 +11,9 @@ export interface AMapTip {
   district?: string
   address?: string
   location?: string
+  adcode?: string
   typecode?: string
+  type?: string
 }
 
 export interface AMapPlaceSuggestion {
@@ -21,6 +22,19 @@ export interface AMapPlaceSuggestion {
   displayName: string
   lat: number
   lng: number
+  district?: string
+  address?: string
+  adcode?: string
+  sourceType?: 'city' | 'poi' | 'fallback-poi'
+  isAdministrative?: boolean
+  isOutOfScope?: boolean
+}
+
+export interface InputTipsQuery {
+  keywords: string
+  type?: 'city'
+  city?: string
+  citylimit?: boolean
 }
 
 export interface DrivingRequestPoint {
@@ -116,6 +130,130 @@ function buildRouteKey(points: DrivingRequestPoint[], preference: RoutePreferenc
   return `${origin}|${destination}|${via}|${strategy}`
 }
 
+function looksAdministrativeName(name: string): boolean {
+  return /省|市|区|县|旗|盟|州$/.test(name)
+}
+
+function formatHierarchy(tip: AMapTip): string {
+  const districtParts = (tip.district ?? '').split(/[·\s]/).map((part) => part.trim()).filter(Boolean)
+  const addressParts = (tip.address ?? '').split(/[·\s]/).map((part) => part.trim()).filter(Boolean)
+  const merged = [...districtParts, ...addressParts]
+  return merged.join('·')
+}
+
+function normalizeTip(tip: AMapTip, sourceType: AMapPlaceSuggestion['sourceType']): AMapPlaceSuggestion | null {
+  if (!tip.location) return null
+  const point = parseLocationText(tip.location)
+  if (!point) return null
+
+  const hierarchy = formatHierarchy(tip)
+  const displayName = hierarchy ? `${tip.name}（${hierarchy}）` : tip.name
+  const isAdministrative = sourceType === 'city' || looksAdministrativeName(tip.name)
+
+  return {
+    id: tip.id,
+    name: tip.name,
+    displayName,
+    lat: point.lat,
+    lng: point.lng,
+    district: tip.district,
+    address: tip.address,
+    adcode: tip.adcode,
+    sourceType,
+    isAdministrative,
+  }
+}
+
+function dedupeTips(list: AMapPlaceSuggestion[]): AMapPlaceSuggestion[] {
+  const seen = new Set<string>()
+  const result: AMapPlaceSuggestion[] = []
+
+  for (const item of list) {
+    const key = `${item.name}|${item.district ?? ''}|${item.lat.toFixed(6)},${item.lng.toFixed(6)}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(item)
+  }
+
+  return result
+}
+
+async function requestInputTips(
+  query: InputTipsQuery,
+  signal?: AbortSignal,
+): Promise<{ tips: AMapPlaceSuggestion[]; error: AMapServiceError | null }> {
+  const url = new URL('/api/amap/inputtips', window.location.origin)
+  url.searchParams.set('keywords', query.keywords)
+  if (query.type) url.searchParams.set('type', query.type)
+  if (query.city) url.searchParams.set('city', query.city)
+  if (typeof query.citylimit === 'boolean') {
+    url.searchParams.set('citylimit', query.citylimit ? 'true' : 'false')
+  }
+
+  try {
+    const response = await fetch(`${url.pathname}${url.search}`, { signal })
+    const data = (await response.json()) as {
+      status?: string
+      info?: string
+      infocode?: string
+      tips?: AMapTip[]
+    }
+
+    if (!response.ok || data.status !== '1') {
+      return {
+        tips: [],
+        error: {
+          code: data.infocode ?? String(response.status),
+          message: data.info ?? '联想服务暂不可用，点击重试。',
+        },
+      }
+    }
+
+    const sourceType: AMapPlaceSuggestion['sourceType'] = query.type === 'city' ? 'city' : 'poi'
+    const tips = (data.tips ?? [])
+      .map((item) => normalizeTip(item, sourceType))
+      .filter((item): item is AMapPlaceSuggestion => Boolean(item))
+
+    return { tips, error: null }
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') return { tips: [], error: null }
+    return { tips: [], error: { message: '联想服务暂不可用，点击重试。' } }
+  }
+}
+
+export async function searchAmapInputTips(
+  query: InputTipsQuery,
+  signal?: AbortSignal,
+): Promise<{ tips: AMapPlaceSuggestion[]; error: AMapServiceError | null }> {
+  const q = query.keywords.trim()
+  if (q.length < 2) return { tips: [], error: null }
+
+  const cityQuery: InputTipsQuery = {
+    keywords: q,
+    type: 'city',
+    city: query.city,
+    citylimit: query.citylimit,
+  }
+
+  const poiQuery: InputTipsQuery = {
+    keywords: q,
+    city: query.city,
+    citylimit: query.citylimit,
+  }
+
+  const [cityResp, poiResp] = await Promise.all([requestInputTips(cityQuery, signal), requestInputTips(poiQuery, signal)])
+
+  let fallbackPoi: AMapPlaceSuggestion[] = []
+  if (query.citylimit && poiResp.tips.length <= 2) {
+    const fallbackResp = await requestInputTips({ keywords: q, citylimit: false }, signal)
+    fallbackPoi = fallbackResp.tips.map((item) => ({ ...item, sourceType: 'fallback-poi', isOutOfScope: true }))
+  }
+
+  const merged = dedupeTips([...cityResp.tips, ...poiResp.tips, ...fallbackPoi])
+  const firstError = cityResp.error ?? poiResp.error
+  return { tips: merged, error: firstError }
+}
+
 async function planDrivingRouteRaw(
   points: DrivingRequestPoint[],
   preference: RoutePreference,
@@ -196,70 +334,6 @@ async function planDrivingRouteRaw(
       route: null,
       error: { message: '高德驾车规划请求失败，请检查网络或稍后重试。' },
     }
-  }
-}
-
-export async function searchAmapInputTips(
-  keywords: string,
-  signal?: AbortSignal,
-): Promise<{ tips: AMapPlaceSuggestion[]; error: AMapServiceError | null }> {
-  const keyError = ensureKey()
-  if (keyError) return { tips: [], error: keyError }
-
-  const q = keywords.trim()
-  if (q.length < 2) return { tips: [], error: null }
-
-  const url = new URL(AMAP_INPUT_TIPS_URL)
-  url.searchParams.set('key', getAmapKey())
-  url.searchParams.set('keywords', q)
-  url.searchParams.set('datatype', 'all')
-  url.searchParams.set('citylimit', 'false')
-
-  try {
-    const response = await fetch(url.toString(), { signal })
-    if (!response.ok) {
-      return {
-        tips: [],
-        error: { code: String(response.status), message: `高德输入提示请求失败（HTTP ${response.status}）。` },
-      }
-    }
-
-    const data = (await response.json()) as {
-      status?: string
-      info?: string
-      infocode?: string
-      tips?: AMapTip[]
-    }
-
-    if (data.status !== '1') {
-      return {
-        tips: [],
-        error: {
-          code: data.infocode,
-          message: `高德输入提示失败：${data.info ?? '未知错误'}`,
-        },
-      }
-    }
-
-    const tips: AMapPlaceSuggestion[] = []
-    for (const item of data.tips ?? []) {
-      if (!item.location) continue
-      const point = parseLocationText(item.location)
-      if (!point) continue
-      const displayName = [item.name, item.district, item.address].filter(Boolean).join(' · ')
-      tips.push({
-        id: item.id,
-        name: item.name,
-        displayName: displayName || item.name,
-        lat: point.lat,
-        lng: point.lng,
-      })
-    }
-
-    return { tips, error: null }
-  } catch (err) {
-    if ((err as Error).name === 'AbortError') return { tips: [], error: null }
-    return { tips: [], error: { message: '高德输入提示请求失败，请稍后重试。' } }
   }
 }
 

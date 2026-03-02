@@ -22,10 +22,11 @@ cp .env.example .env
 填入：
 
 ```bash
-VITE_AMAP_KEY=你的高德Web服务Key
+AMAP_WEB_KEY=你的高德Web服务Key
+VITE_AMAP_KEY=你的高德Web服务Key（当前用于驾车规划）
 ```
 
-> 未配置 key 时，地名联想与路径规划会报错并在 UI 显示原因。
+> InputTips 通过 `/api/amap/inputtips` 代理调用，不再在浏览器直接拼接高德 key。
 
 ---
 
@@ -83,6 +84,18 @@ Array<{ id?: string; name: string; lat: number; lng: number; amapId?: string }>
 
 切换后会立即重新调用高德驾车规划并更新 polyline。该字段随路段一并持久化。
 
+
+### 3.4 地点联想（行政区优先 + 范围锁定）
+
+- 输入关键词时会并行请求：
+  - 行政区联想（`type=city`）
+  - POI 联想（默认）
+- 合并展示时行政区优先，POI 在后。
+- 选中行政区后自动锁定范围（`citylimit=true`），后续联想优先在该城市/区县内检索。
+- 可点击 `清除范围` 回到全国检索。
+- 若范围内 POI 结果过少，会自动补充“范围外结果”作为回退。
+- 请求有防抖、取消与乱序保护，失败时会提示“联想服务暂不可用，点击重试”。
+
 ---
 
 ## 4. 持久化
@@ -109,11 +122,12 @@ Array<{ id?: string; name: string; lat: number; lng: number; amapId?: string }>
 
 ## 6. 常见问题
 
-### 6.1 提示“未配置 VITE_AMAP_KEY”
+### 6.1 提示“未配置 key”
 
 请检查：
 - `.env` 是否存在
-- `VITE_AMAP_KEY` 是否填写
+- `AMAP_WEB_KEY`（InputTips 代理）是否填写
+- `VITE_AMAP_KEY`（当前驾车规划）是否填写
 - 修改后是否重启了 `npm run dev`
 
 ### 6.2 接口限流 / 调用失败
