@@ -3,6 +3,7 @@ import FilterPanel from './components/FilterPanel'
 import MapPlaceholder from './components/MapPlaceholder'
 import MapPanel from './components/MapPanel'
 import TripEditor from './components/TripEditor'
+import TripManageModal from './components/TripManageModal'
 import { useFilteredSegments } from './hooks/useFilteredSegments'
 import { loadTripReview, saveTripReview } from './services/tripStorage'
 import type {
@@ -37,6 +38,7 @@ function App() {
 
   const [editingEndpointsSegmentId, setEditingEndpointsSegmentId] = useState<string | null>(null)
   const [endpointDraft, setEndpointDraft] = useState<EndpointDraft | null>(null)
+  const [tripManagerOpen, setTripManagerOpen] = useState(false)
 
   useEffect(() => {
     saveTripReview(tripReview)
@@ -265,6 +267,66 @@ function App() {
     }
   }
 
+
+  const deleteTrip = (tripId: string) => {
+    const target = tripReview.trips.find((trip) => trip.id === tripId)
+    if (!target) return
+
+    const segmentCount = target.days.reduce((sum, day) => sum + day.routeSegments.length, 0)
+    const confirmed = window.confirm(
+      `确定删除旅程“${target.title}”吗？将同时删除该旅程下的全部日期与路段数据（${segmentCount} 条路段）。此操作不可恢复。`,
+    )
+    if (!confirmed) return
+
+    setTripReview((prev) => ({
+      trips: prev.trips.filter((trip) => trip.id !== tripId),
+    }))
+
+    if (filters.tripId === tripId) {
+      setFilters({ tripId: '', dayId: '', segmentId: '' })
+    }
+
+    // 删除当前被筛选或正在编辑的旅程后，清空相关编辑态，避免 UI 指向不存在的数据。
+    const deletedSegmentIds = new Set(target.days.flatMap((day) => day.routeSegments.map((segment) => segment.id)))
+    if (editingSegmentId && deletedSegmentIds.has(editingSegmentId)) {
+      setEditingSegmentId(null)
+    }
+    if (editingWaypointSegmentId && deletedSegmentIds.has(editingWaypointSegmentId)) {
+      setEditingWaypointSegmentId(null)
+      setWaypointDrafts([])
+      setSelectedWaypointId(null)
+    }
+    if (editingEndpointsSegmentId && deletedSegmentIds.has(editingEndpointsSegmentId)) {
+      setEditingEndpointsSegmentId(null)
+      setEndpointDraft(null)
+    }
+  }
+
+  const moveTrip = (tripId: string, direction: 'up' | 'down') => {
+    setTripReview((prev) => {
+      const idx = prev.trips.findIndex((trip) => trip.id === tripId)
+      if (idx < 0) return prev
+      const target = direction === 'up' ? idx - 1 : idx + 1
+      if (target < 0 || target >= prev.trips.length) return prev
+      const nextTrips = [...prev.trips]
+      const [moved] = nextTrips.splice(idx, 1)
+      nextTrips.splice(target, 0, moved)
+      return { trips: nextTrips }
+    })
+  }
+
+  const reorderTrips = (orderedTripIds: string[]) => {
+    setTripReview((prev) => {
+      if (orderedTripIds.length !== prev.trips.length) return prev
+      const map = new Map(prev.trips.map((trip) => [trip.id, trip]))
+      const nextTrips = orderedTripIds
+        .map((id) => map.get(id))
+        .filter((trip): trip is (typeof prev.trips)[number] => Boolean(trip))
+      if (nextTrips.length !== prev.trips.length) return prev
+      return { trips: nextTrips }
+    })
+  }
+
   const routeTypeValue = activeSegment?.preference ?? 'HIGHWAY_FIRST'
 
   return (
@@ -273,7 +335,21 @@ function App() {
 
       <TripEditor trips={tripReview.trips} onAddTrip={addTrip} onAddSegment={addSegment} />
 
-      <FilterPanel trips={tripReview.trips} filters={filters} onChange={setFilters} />
+      <FilterPanel
+        trips={tripReview.trips}
+        filters={filters}
+        onChange={setFilters}
+        onOpenTripManager={() => setTripManagerOpen(true)}
+      />
+
+      <TripManageModal
+        open={tripManagerOpen}
+        trips={tripReview.trips}
+        onClose={() => setTripManagerOpen(false)}
+        onDeleteTrip={deleteTrip}
+        onMoveTrip={moveTrip}
+        onReorderTrips={reorderTrips}
+      />
 
       <MapPlaceholder
         filteredSegments={filteredSegments}

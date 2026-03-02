@@ -5,10 +5,11 @@ interface FilterPanelProps {
   trips: Trip[]
   filters: FilterState
   onChange: (next: FilterState) => void
+  onOpenTripManager: () => void
 }
 
 // 筛选区：按“旅程 / 日期 / 路段”逐级筛选，并处理筛选联动重置。
-function FilterPanel({ trips, filters, onChange }: FilterPanelProps) {
+function FilterPanel({ trips, filters, onChange, onOpenTripManager }: FilterPanelProps) {
   const selectedTrip = trips.find((trip) => trip.id === filters.tripId)
 
   const dayOptions = useMemo(() => {
@@ -27,17 +28,22 @@ function FilterPanel({ trips, filters, onChange }: FilterPanelProps) {
       <div className="filter-row">
         <label>
           旅程
-          <select
-            value={filters.tripId}
-            onChange={(e) => onChange({ tripId: e.target.value, dayId: '', segmentId: '' })}
-          >
-            <option value="">全部旅程</option>
-            {trips.map((trip) => (
-              <option key={trip.id} value={trip.id}>
-                {trip.title}
-              </option>
-            ))}
-          </select>
+          <div className="trip-filter-row">
+            <select
+              value={filters.tripId}
+              onChange={(e) => onChange({ tripId: e.target.value, dayId: '', segmentId: '' })}
+            >
+              <option value="">全部旅程</option>
+              {trips.map((trip) => (
+                <option key={trip.id} value={trip.id}>
+                  {trip.title}
+                </option>
+              ))}
+            </select>
+            <button type="button" onClick={onOpenTripManager}>
+              管理旅程
+            </button>
+          </div>
         </label>
 
         <label>
