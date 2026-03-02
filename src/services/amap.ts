@@ -6,14 +6,14 @@ const ROUTE_QUEUE_CONCURRENCY = 2
 const ROUTE_REQUEST_DELAY_MS = 200
 
 export interface AMapTip {
-  id?: string
+  id: string
   name: string
-  district?: string
-  address?: string
-  location?: string
-  adcode?: string
-  typecode?: string
-  type?: string
+  district: string
+  address: string
+  location: string
+  adcode: string
+  typecode: string
+  type: string
 }
 
 export interface AMapPlaceSuggestion {
@@ -122,6 +122,25 @@ function enqueueRouteTask(run: () => Promise<DrivingRouteResult>): Promise<Drivi
   })
 }
 
+
+function toStringOrEmpty(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function normalizeRawTip(raw: unknown): AMapTip {
+  const tip = (raw ?? {}) as Record<string, unknown>
+  return {
+    id: toStringOrEmpty(tip.id),
+    name: toStringOrEmpty(tip.name),
+    district: toStringOrEmpty(tip.district),
+    address: toStringOrEmpty(tip.address),
+    location: toStringOrEmpty(tip.location),
+    adcode: toStringOrEmpty(tip.adcode),
+    typecode: toStringOrEmpty(tip.typecode),
+    type: toStringOrEmpty(tip.type),
+  }
+}
+
 function buildRouteKey(points: DrivingRequestPoint[], preference: RoutePreference): string {
   const origin = toLonLatText(points[0])
   const destination = toLonLatText(points[points.length - 1])
@@ -135,8 +154,8 @@ function looksAdministrativeName(name: string): boolean {
 }
 
 function formatHierarchy(tip: AMapTip): string {
-  const districtParts = (tip.district ?? '').split(/[·\s]/).map((part) => part.trim()).filter(Boolean)
-  const addressParts = (tip.address ?? '').split(/[·\s]/).map((part) => part.trim()).filter(Boolean)
+  const districtParts = tip.district.split(/[·\s]/).map((part) => part.trim()).filter(Boolean)
+  const addressParts = tip.address.split(/[·\s]/).map((part) => part.trim()).filter(Boolean)
   const merged = [...districtParts, ...addressParts]
   return merged.join('·')
 }
@@ -190,33 +209,42 @@ async function requestInputTips(
     url.searchParams.set('citylimit', query.citylimit ? 'true' : 'false')
   }
 
+  let raw: unknown = null
+
   try {
     const response = await fetch(`${url.pathname}${url.search}`, { signal })
-    const data = (await response.json()) as {
-      status?: string
-      info?: string
-      infocode?: string
-      tips?: AMapTip[]
-    }
+    raw = await response.json()
+    const payload = (raw ?? {}) as Record<string, unknown>
 
-    if (!response.ok || data.status !== '1') {
+    const status = toStringOrEmpty(payload.status)
+    const info = toStringOrEmpty(payload.info)
+    const infocode = toStringOrEmpty(payload.infocode)
+    const rawTips = payload.tips
+
+    if (!response.ok || status !== '1' || !Array.isArray(rawTips)) {
       return {
         tips: [],
         error: {
-          code: data.infocode ?? String(response.status),
-          message: data.info ?? '联想服务暂不可用，点击重试。',
+          code: infocode || String(response.status),
+          message: info || '联想服务暂不可用，点击重试。',
         },
       }
     }
 
+    const normalizedTips = rawTips.map((item) => normalizeRawTip(item))
+
     const sourceType: AMapPlaceSuggestion['sourceType'] = query.type === 'city' ? 'city' : 'poi'
-    const tips = (data.tips ?? [])
+    const tips = normalizedTips
       .map((item) => normalizeTip(item, sourceType))
       .filter((item): item is AMapPlaceSuggestion => Boolean(item))
 
     return { tips, error: null }
   } catch (error) {
     if ((error as Error).name === 'AbortError') return { tips: [], error: null }
+    if (import.meta.env.DEV) {
+      console.error('InputTips raw response', raw)
+      console.error(error)
+    }
     return { tips: [], error: { message: '联想服务暂不可用，点击重试。' } }
   }
 }
