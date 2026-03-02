@@ -1,7 +1,5 @@
 import type { RoutePreference } from '../types/trip'
 
-const AMAP_DRIVING_URL = 'https://restapi.amap.com/v3/direction/driving'
-
 const ROUTE_QUEUE_CONCURRENCY = 2
 const ROUTE_REQUEST_DELAY_MS = 200
 
@@ -65,11 +63,6 @@ const routeCache = new Map<string, DrivingRouteResult>()
 const routeTaskQueue: RouteTask[] = []
 let activeRouteTasks = 0
 
-function getAmapKey(): string {
-  const key = import.meta.env.VITE_AMAP_KEY
-  return typeof key === 'string' ? key.trim() : ''
-}
-
 function toLonLatText(point: DrivingRequestPoint): string {
   return `${point.lng},${point.lat}`
 }
@@ -88,10 +81,6 @@ function preferenceToStrategy(preference: RoutePreference): string {
   if (preference === 'AVOID_TOLL') return '1'
   if (preference === 'NORMAL_ROAD_FIRST') return '2'
   return '0'
-}
-
-function ensureKey(): AMapServiceError | null {
-  return getAmapKey() ? null : { code: 'NO_KEY', message: '未配置 VITE_AMAP_KEY，无法调用高德 API。' }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -282,36 +271,26 @@ export async function searchAmapInputTips(
   return { tips: merged, error: firstError }
 }
 
-async function planDrivingRouteRaw(
-  points: DrivingRequestPoint[],
-  preference: RoutePreference,
-  routeKey: string,
-): Promise<{ route: DrivingRouteResult | null; error: AMapServiceError | null }> {
-  const keyError = ensureKey()
-  if (keyError) return { route: null, error: keyError }
-  if (points.length < 2) return { route: null, error: { code: 'POINTS_NOT_ENOUGH', message: '路径规划至少需要起点和终点。' } }
-
-  const url = new URL(AMAP_DRIVING_URL)
-  url.searchParams.set('key', getAmapKey())
-  url.searchParams.set('origin', toLonLatText(points[0]))
-  url.searchParams.set('destination', toLonLatText(points[points.length - 1]))
-  if (points.length > 2) {
-    const waypoints = points.slice(1, -1).map(toLonLatText).join(';')
-    if (waypoints) url.searchParams.set('waypoints', waypoints)
+export async function requestDrivingRoute(
+  originLngLat: string,
+  destLngLat: string,
+  strategy = '0',
+  waypoints?: string,
+): Promise<{ polyline: Array<[number, number]>; distanceText: string; durationText: string }> {
+  const url = new URL('/api/amap/direction', window.location.origin)
+  url.searchParams.set('origin', originLngLat)
+  url.searchParams.set('destination', destLngLat)
+  url.searchParams.set('strategy', strategy)
+  if (waypoints) {
+    url.searchParams.set('waypoints', waypoints)
   }
-  url.searchParams.set('strategy', preferenceToStrategy(preference))
-  url.searchParams.set('extensions', 'base')
 
-  try {
-    const response = await fetch(url.toString())
-    if (!response.ok) {
-      return {
-        route: null,
-        error: { code: String(response.status), message: `高德驾车规划失败（HTTP ${response.status}）。` },
-      }
-    }
-
-    const data = (await response.json()) as {
+  const response = await fetch(`${url.pathname}${url.search}`)
+  const raw = (await response.json()) as {
+    ok?: boolean
+    message?: string
+    detail?: unknown
+    data?: {
       status?: string
       info?: string
       infocode?: string
@@ -323,44 +302,78 @@ async function planDrivingRouteRaw(
         }>
       }
     }
+  }
 
-    if (data.status !== '1') {
-      return {
-        route: null,
-        error: { code: data.infocode, message: `高德驾车规划失败：${data.info ?? '未知错误'}` },
-      }
+  if (!response.ok || !raw.ok) {
+    if (import.meta.env.DEV) {
+      console.error('Direction raw response', raw)
     }
+    throw new Error(raw.message || 'direction failed')
+  }
 
-    const path = data.route?.paths?.[0]
-    if (!path) {
-      return { route: null, error: { code: 'NO_PATH', message: '高德未返回可用路线。' } }
+  const payload = raw.data
+  if (!payload || payload.status !== '1') {
+    if (import.meta.env.DEV) {
+      console.error('Direction amap payload', payload)
     }
+    throw new Error(payload?.info || payload?.infocode || 'direction failed')
+  }
 
-    const pointsList: Array<[number, number]> = []
-    for (const step of path.steps ?? []) {
-      if (!step.polyline) continue
-      for (const rawPair of step.polyline.split(';')) {
-        const parsed = parseLocationText(rawPair)
-        if (parsed) pointsList.push([parsed.lat, parsed.lng])
-      }
+  const path = payload.route?.paths?.[0]
+  if (!path) throw new Error('高德未返回可用路线。')
+
+  const pointsList: Array<[number, number]> = []
+  const seen = new Set<string>()
+  for (const step of path.steps ?? []) {
+    if (!step.polyline) continue
+    for (const rawPair of step.polyline.split(';')) {
+      const parsed = parseLocationText(rawPair)
+      if (!parsed) continue
+      const key = `${parsed.lat.toFixed(6)},${parsed.lng.toFixed(6)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      pointsList.push([parsed.lat, parsed.lng])
     }
+  }
 
-    if (!pointsList.length) {
-      return { route: null, error: { code: 'EMPTY_POLYLINE', message: '高德返回路线为空。' } }
+  if (!pointsList.length) {
+    throw new Error('高德返回路线为空。')
+  }
+
+  return {
+    polyline: pointsList,
+    distanceText: path.distance ? `${path.distance} 米` : '未知',
+    durationText: path.duration ? `${path.duration} 秒` : '未知',
+  }
+}
+
+async function planDrivingRouteRaw(
+  points: DrivingRequestPoint[],
+  preference: RoutePreference,
+  routeKey: string,
+): Promise<{ route: DrivingRouteResult | null; error: AMapServiceError | null }> {
+  if (points.length < 2) return { route: null, error: { code: 'POINTS_NOT_ENOUGH', message: '路径规划至少需要起点和终点。' } }
+
+  const origin = toLonLatText(points[0])
+  const destination = toLonLatText(points[points.length - 1])
+  const strategy = preferenceToStrategy(preference)
+  const waypoints = points.length > 2 ? points.slice(1, -1).map(toLonLatText).join('|') : undefined
+
+  try {
+    const result = await requestDrivingRoute(origin, destination, strategy, waypoints)
+    return {
+      route: {
+        polyline: result.polyline,
+        distanceText: result.distanceText,
+        durationText: result.durationText,
+        routeKey,
+      },
+      error: null,
     }
-
-    const result: DrivingRouteResult = {
-      polyline: pointsList,
-      distanceText: path.distance ? `${path.distance} 米` : '未知',
-      durationText: path.duration ? `${path.duration} 秒` : '未知',
-      routeKey,
-    }
-
-    return { route: result, error: null }
-  } catch {
+  } catch (error) {
     return {
       route: null,
-      error: { message: '高德驾车规划请求失败，请检查网络或稍后重试。' },
+      error: { message: (error as Error).message || '高德驾车规划请求失败，请检查网络或稍后重试。' },
     }
   }
 }

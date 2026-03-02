@@ -23,10 +23,9 @@ cp .env.example .env
 
 ```bash
 AMAP_WEB_KEY=你的高德Web服务Key
-VITE_AMAP_KEY=你的高德Web服务Key（当前用于驾车规划）
 ```
 
-> InputTips 通过 `/api/amap/inputtips` 代理调用，不再在浏览器直接拼接高德 key。
+> InputTips 与驾车规划都通过后端代理调用，不再在浏览器直接使用高德 key。
 
 ---
 
@@ -126,8 +125,7 @@ Array<{ id?: string; name: string; lat: number; lng: number; amapId?: string }>
 
 请检查：
 - `.env` 是否存在
-- `AMAP_WEB_KEY`（InputTips 代理）是否填写
-- `VITE_AMAP_KEY`（当前驾车规划）是否填写
+- `AMAP_WEB_KEY` 是否填写
 - 修改后是否重启了 `npm run dev`
 
 ### 6.2 接口限流 / 调用失败
