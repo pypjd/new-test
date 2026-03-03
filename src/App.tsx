@@ -12,6 +12,8 @@ import type {
   RoutePreference,
   RouteSegment,
   RouteSummary,
+  Trip,
+  TripDay,
   TripReview,
   Waypoint,
 } from './types/trip'
@@ -25,7 +27,15 @@ interface EndpointDraft {
   endCoord?: CoordPoint
 }
 
-// 根组件：组装数据状态、编辑动作、筛选状态、占位区与地图轨迹联动。
+interface SegmentRef {
+  tripIndex: number
+  dayIndex: number
+  segmentIndex: number
+  trip: Trip
+  day: TripDay
+  segment: RouteSegment
+}
+
 function App() {
   const [tripReview, setTripReview] = useState<TripReview>(() => loadTripReview())
   const [filters, setFilters] = useState<FilterState>({ tripId: '', dayId: '', segmentId: '' })
@@ -44,11 +54,28 @@ function App() {
     saveTripReview(tripReview)
   }, [tripReview])
 
-  const filteredSegments = useFilteredSegments(tripReview.trips, filters)
+  const isAllTripsSelected = !filters.tripId
+  // 占位区和底图渲染逻辑解耦：all 时占位区展示旅程列表，底图仍渲染 mapRenderSegments 总览轨迹。
+  const placeholderMode: 'trip-list' | 'segment-list' = isAllTripsSelected ? 'trip-list' : 'segment-list'
+
+  const mapRenderSegments = useFilteredSegments(tripReview.trips, filters)
+  const listViewSegments = placeholderMode === 'segment-list' ? mapRenderSegments : []
 
   const summary: RouteSummary = useMemo(
     () => ({ totalDistanceText: '待生成', totalDurationText: '待生成' }),
     [],
+  )
+
+  const tripListItems = useMemo(
+    () =>
+      tripReview.trips.map((trip) => ({
+        id: trip.id,
+        title: trip.title,
+        startDate: trip.startDate,
+        endDate: trip.endDate,
+        segmentCount: trip.days.reduce((sum, day) => sum + day.routeSegments.length, 0),
+      })),
+    [tripReview.trips],
   )
 
   const filterContext = useMemo(() => {
@@ -64,15 +91,15 @@ function App() {
   }, [tripReview.trips, filters.tripId, filters.dayId, filters.segmentId])
 
   const activeSegmentId = useMemo(() => {
-    if (editingSegmentId && filteredSegments.some((segment) => segment.id === editingSegmentId)) {
+    if (editingSegmentId && listViewSegments.some((segment) => segment.id === editingSegmentId)) {
       return editingSegmentId
     }
-    return filteredSegments[0]?.id ?? null
-  }, [filteredSegments, editingSegmentId])
+    return listViewSegments[0]?.id ?? null
+  }, [listViewSegments, editingSegmentId])
 
   const activeSegment = useMemo(
-    () => filteredSegments.find((segment) => segment.id === activeSegmentId) ?? null,
-    [filteredSegments, activeSegmentId],
+    () => listViewSegments.find((segment) => segment.id === activeSegmentId) ?? null,
+    [listViewSegments, activeSegmentId],
   )
 
   const displayedWaypoints = useMemo<Waypoint[]>(() => {
@@ -90,11 +117,99 @@ function App() {
     return endpointDraft
   }, [endpointDraft, activeSegmentId])
 
+  const findSegmentRef = (segmentId: string, data = tripReview): SegmentRef | null => {
+    for (let t = 0; t < data.trips.length; t += 1) {
+      const trip = data.trips[t]
+      for (let d = 0; d < trip.days.length; d += 1) {
+        const day = trip.days[d]
+        const segmentIndex = day.routeSegments.findIndex((segment) => segment.id === segmentId)
+        if (segmentIndex >= 0) {
+          return {
+            tripIndex: t,
+            dayIndex: d,
+            segmentIndex,
+            trip,
+            day,
+            segment: day.routeSegments[segmentIndex],
+          }
+        }
+      }
+    }
+    return null
+  }
+
+  const getSegmentDate = (segmentId: string | null): string => {
+    if (!segmentId) return ''
+    return findSegmentRef(segmentId)?.day.date ?? ''
+  }
+
+  const activeSegmentDate = useMemo(() => getSegmentDate(activeSegmentId), [activeSegmentId, tripReview])
+
+  const moveSegmentInTrip = (segmentId: string, direction: 'up' | 'down') => {
+    setTripReview((prev) => {
+      const ref = findSegmentRef(segmentId, prev)
+      if (!ref) return prev
+
+      const segmentIdsInTrip = ref.trip.days.flatMap((day) => day.routeSegments.map((segment) => segment.id))
+      const currentFlatIndex = segmentIdsInTrip.findIndex((id) => id === segmentId)
+      const nextFlatIndex = direction === 'up' ? currentFlatIndex - 1 : currentFlatIndex + 1
+      if (currentFlatIndex < 0 || nextFlatIndex < 0 || nextFlatIndex >= segmentIdsInTrip.length) return prev
+
+      const targetId = segmentIdsInTrip[nextFlatIndex]
+      const targetRefInTrip = ref.trip.days
+        .flatMap((day, dayIdx) => day.routeSegments.map((segment, segIdx) => ({ dayIdx, segIdx, id: segment.id })))
+        .find((item) => item.id === targetId)
+
+      if (!targetRefInTrip || targetRefInTrip.dayIdx !== ref.dayIndex) return prev
+
+      const nextTrips = prev.trips.map((trip, tripIndex) => {
+        if (tripIndex !== ref.tripIndex) return trip
+        return {
+          ...trip,
+          days: trip.days.map((day, dayIndex) => {
+            if (dayIndex !== ref.dayIndex) return day
+            const nextRouteSegments = [...day.routeSegments]
+            const [moved] = nextRouteSegments.splice(ref.segmentIndex, 1)
+            const insertIndex = direction === 'up' ? targetRefInTrip.segIdx : targetRefInTrip.segIdx
+            nextRouteSegments.splice(insertIndex, 0, moved)
+            return { ...day, routeSegments: nextRouteSegments }
+          }),
+        }
+      })
+
+      return { trips: nextTrips }
+    })
+  }
+
+  const canMoveSegment = (segmentId: string | null, direction: 'up' | 'down'): boolean => {
+    if (!segmentId || !filters.tripId) return false
+    const ref = findSegmentRef(segmentId)
+    if (!ref || ref.trip.id !== filters.tripId) return false
+    const flat = ref.trip.days.flatMap((day) => day.routeSegments.map((segment) => ({ id: segment.id, dayId: day.id })))
+    const current = flat.findIndex((item) => item.id === segmentId)
+    const target = direction === 'up' ? current - 1 : current + 1
+    if (current < 0 || target < 0 || target >= flat.length) return false
+    return flat[target].dayId === ref.day.id
+  }
+
+  const updateTripDateRangeByDays = (trip: Trip): Trip => {
+    const dates = trip.days.map((day) => day.date).sort()
+    if (!dates.length) return trip
+    return { ...trip, startDate: dates[0], endDate: dates[dates.length - 1] }
+  }
+
   const addTrip = (payload: { title: string; startDate: string; endDate: string }) => {
     setTripReview((prev) => ({
       trips: [
         ...prev.trips,
-        { id: createId('trip'), title: payload.title, startDate: payload.startDate, endDate: payload.endDate, days: [] },
+        {
+          id: createId('trip'),
+          title: payload.title,
+          startDate: payload.startDate,
+          endDate: payload.endDate,
+          order: prev.trips.length,
+          days: [],
+        },
       ],
     }))
   }
@@ -120,6 +235,7 @@ function App() {
         const nextSegment: RouteSegment = {
           id: createId('segment'),
           name: payload.name,
+          date: payload.dayDate,
           startPoint: payload.startPoint,
           endPoint: payload.endPoint,
           viaPointsText: payload.viaPointsText,
@@ -128,21 +244,22 @@ function App() {
           endCoord: payload.endCoord,
           startPlaceId: payload.startPlaceId,
           endPlaceId: payload.endPlaceId,
+          order: matchedDay?.routeSegments.length ?? 0,
         }
 
         if (!matchedDay) {
-          return {
+          return updateTripDateRangeByDays({
             ...trip,
             days: [...trip.days, { id: payload.dayDate, date: payload.dayDate, routeSegments: [nextSegment] }],
-          }
+          })
         }
 
-        return {
+        return updateTripDateRangeByDays({
           ...trip,
           days: trip.days.map((day) =>
             day.date !== payload.dayDate ? day : { ...day, routeSegments: [...day.routeSegments, nextSegment] },
           ),
-        }
+        })
       }),
     }))
   }
@@ -157,6 +274,61 @@ function App() {
         })),
       })),
     }))
+  }
+
+  const updateSegmentMeta = (segmentId: string, patch: { name: string; date: string }) => {
+    setTripReview((prev) => {
+      const ref = findSegmentRef(segmentId, prev)
+      if (!ref) return prev
+      const nextName = patch.name.trim() ? patch.name : ref.segment.name
+      const nextDate = patch.date || ref.day.date
+
+      const movingDay = nextDate !== ref.day.date
+
+      const nextTrips = prev.trips.map((trip, tripIndex) => {
+        if (tripIndex !== ref.tripIndex) return trip
+
+        if (!movingDay) {
+          const days = trip.days.map((day, dayIndex) =>
+            dayIndex !== ref.dayIndex
+              ? day
+              : {
+                  ...day,
+                  routeSegments: day.routeSegments.map((segment) =>
+                    segment.id === segmentId ? { ...segment, name: nextName, date: nextDate } : segment,
+                  ),
+                },
+          )
+          return updateTripDateRangeByDays({ ...trip, days })
+        }
+
+        const movedSegment = { ...ref.segment, name: nextName, date: nextDate }
+        const daysAfterRemoval = trip.days
+          .map((day, dayIndex) =>
+            dayIndex !== ref.dayIndex
+              ? day
+              : { ...day, routeSegments: day.routeSegments.filter((segment) => segment.id !== segmentId) },
+          )
+          .filter((day) => day.routeSegments.length > 0)
+
+        const targetDayIndex = daysAfterRemoval.findIndex((day) => day.date === nextDate)
+        const days =
+          targetDayIndex >= 0
+            ? daysAfterRemoval.map((day, idx) =>
+                idx !== targetDayIndex ? day : { ...day, routeSegments: [...day.routeSegments, movedSegment] },
+              )
+            : [...daysAfterRemoval, { id: nextDate, date: nextDate, routeSegments: [movedSegment] }]
+
+        return updateTripDateRangeByDays({ ...trip, days: days.sort((a, b) => a.date.localeCompare(b.date)) })
+      })
+
+      return { trips: nextTrips }
+    })
+
+    setFilters((prev) => {
+      if (prev.segmentId !== segmentId && activeSegmentId !== segmentId) return prev
+      return { ...prev, dayId: patch.date || prev.dayId }
+    })
   }
 
   const saveSegmentTrack = (payload: {
@@ -175,7 +347,7 @@ function App() {
   }
 
   const startWaypointEdit = (segmentId: string) => {
-    const target = filteredSegments.find((segment) => segment.id === segmentId)
+    const target = listViewSegments.find((segment) => segment.id === segmentId)
     setEditingWaypointSegmentId(segmentId)
     setWaypointDrafts([...(target?.waypoints ?? [])])
   }
@@ -188,7 +360,7 @@ function App() {
   }
 
   const startEndpointsEdit = (segmentId: string) => {
-    const target = filteredSegments.find((segment) => segment.id === segmentId)
+    const target = listViewSegments.find((segment) => segment.id === segmentId)
     if (!target) return
     setEditingEndpointsSegmentId(segmentId)
     setEndpointDraft({
@@ -226,36 +398,36 @@ function App() {
     const confirmed = window.confirm(`确定删除“${payload.name}”这段路段吗？此操作不可恢复。`)
     if (!confirmed) return
 
-    const fallbackSegment = filteredSegments[payload.index]
+    const fallbackSegment = listViewSegments[payload.index]
 
     setTripReview((prev) => ({
       trips: prev.trips.map((trip) => ({
         ...trip,
-        days: trip.days.map((day) => {
-          let fallbackUsed = false
-          const nextRouteSegments = day.routeSegments.filter((segment) => {
-            if (payload.segmentId && segment.id) return segment.id !== payload.segmentId
-            if (!fallbackSegment) return true
-            if (!fallbackUsed && segment === fallbackSegment) {
-              fallbackUsed = true
-              return false
-            }
-            return true
+        days: trip.days
+          .map((day) => {
+            let fallbackUsed = false
+            const nextRouteSegments = day.routeSegments.filter((segment) => {
+              if (payload.segmentId && segment.id) return segment.id !== payload.segmentId
+              if (!fallbackSegment) return true
+              if (!fallbackUsed && segment === fallbackSegment) {
+                fallbackUsed = true
+                return false
+              }
+              return true
+            })
+            return { ...day, routeSegments: nextRouteSegments }
           })
-          return { ...day, routeSegments: nextRouteSegments }
-        }),
+          .filter((day) => day.routeSegments.length > 0),
       })),
     }))
 
     const targetId = payload.segmentId ?? fallbackSegment?.id ?? null
 
     if (targetId && editingSegmentId === targetId) {
-      // 删除正在编辑的路段后，必须退出编辑态，避免地图继续持有无效草稿。
       setEditingSegmentId(null)
     }
 
     if (targetId && editingWaypointSegmentId === targetId) {
-      // 删除路段后清空途经点编辑草稿，避免继续编辑已不存在的数据。
       setEditingWaypointSegmentId(null)
       setWaypointDrafts([])
       setSelectedWaypointId(null)
@@ -266,7 +438,6 @@ function App() {
       setEndpointDraft(null)
     }
   }
-
 
   const deleteTrip = (tripId: string) => {
     const target = tripReview.trips.find((trip) => trip.id === tripId)
@@ -286,7 +457,6 @@ function App() {
       setFilters({ tripId: '', dayId: '', segmentId: '' })
     }
 
-    // 删除当前被筛选或正在编辑的旅程后，清空相关编辑态，避免 UI 指向不存在的数据。
     const deletedSegmentIds = new Set(target.days.flatMap((day) => day.routeSegments.map((segment) => segment.id)))
     if (editingSegmentId && deletedSegmentIds.has(editingSegmentId)) {
       setEditingSegmentId(null)
@@ -302,6 +472,23 @@ function App() {
     }
   }
 
+  const updateTrip = (tripId: string, patch: { title: string; startDate: string; endDate: string }): boolean => {
+    if (patch.endDate < patch.startDate) return false
+    setTripReview((prev) => ({
+      trips: prev.trips.map((trip) =>
+        trip.id === tripId
+          ? {
+              ...trip,
+              title: patch.title,
+              startDate: patch.startDate,
+              endDate: patch.endDate,
+            }
+          : trip,
+      ),
+    }))
+    return true
+  }
+
   const moveTrip = (tripId: string, direction: 'up' | 'down') => {
     setTripReview((prev) => {
       const idx = prev.trips.findIndex((trip) => trip.id === tripId)
@@ -311,7 +498,7 @@ function App() {
       const nextTrips = [...prev.trips]
       const [moved] = nextTrips.splice(idx, 1)
       nextTrips.splice(target, 0, moved)
-      return { trips: nextTrips }
+      return { trips: nextTrips.map((trip, order) => ({ ...trip, order })) }
     })
   }
 
@@ -323,7 +510,7 @@ function App() {
         .map((id) => map.get(id))
         .filter((trip): trip is (typeof prev.trips)[number] => Boolean(trip))
       if (nextTrips.length !== prev.trips.length) return prev
-      return { trips: nextTrips }
+      return { trips: nextTrips.map((trip, order) => ({ ...trip, order })) }
     })
   }
 
@@ -349,14 +536,22 @@ function App() {
         onDeleteTrip={deleteTrip}
         onMoveTrip={moveTrip}
         onReorderTrips={reorderTrips}
+        onUpdateTrip={updateTrip}
       />
 
       <MapPlaceholder
-        filteredSegments={filteredSegments}
+        placeholderMode={placeholderMode}
+        tripListItems={tripListItems}
+        onViewTrip={(tripId) => setFilters({ tripId, dayId: '', segmentId: '' })}
+        onOpenTripManager={() => setTripManagerOpen(true)}
+        onDeleteTrip={deleteTrip}
+        filteredSegments={listViewSegments}
         summary={summary}
         filterContext={filterContext}
         editingSegmentId={editingSegmentId}
         activeSegmentId={activeSegmentId}
+        activeSegment={activeSegment}
+        activeSegmentDate={activeSegmentDate}
         onEditSegment={(segmentId) => setEditingSegmentId(segmentId)}
         onDeleteSegment={deleteSegment}
         routeType={routeTypeValue}
@@ -364,6 +559,10 @@ function App() {
           if (!activeSegmentId) return
           updateSegment(activeSegmentId, (segment) => ({ ...segment, preference: value }))
         }}
+        onUpdateSegmentMeta={updateSegmentMeta}
+        onMoveSegmentInTrip={moveSegmentInTrip}
+        canMoveSegmentUp={canMoveSegment(activeSegmentId, 'up')}
+        canMoveSegmentDown={canMoveSegment(activeSegmentId, 'down')}
         waypoints={editingWaypointSegmentId === activeSegmentId ? waypointDrafts : displayedWaypoints}
         onLocateWaypoint={(waypoint) => setSelectedWaypointId(waypoint.id)}
         waypointEditMode={editingWaypointSegmentId === activeSegmentId}
@@ -442,7 +641,7 @@ function App() {
       />
 
       <MapPanel
-        filteredSegments={filteredSegments}
+        filteredSegments={mapRenderSegments}
         editingSegmentId={editingSegmentId}
         onStartEdit={(segmentId) => setEditingSegmentId(segmentId)}
         onCancelEdit={() => setEditingSegmentId(null)}

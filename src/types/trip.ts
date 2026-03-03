@@ -20,6 +20,8 @@ export interface Waypoint {
 export interface RouteSegment {
   id: string
   name: string
+  date?: string
+  order?: number
   startPoint: string
   endPoint: string
   viaPointsText: string
@@ -41,6 +43,7 @@ export interface TripDay {
 export interface Trip {
   id: string
   title: string
+  order?: number
   startDate: string
   endDate: string
   days: TripDay[]

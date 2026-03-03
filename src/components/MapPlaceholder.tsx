@@ -15,17 +15,38 @@ interface EndpointDraft {
   endCoord?: { lat: number; lon: number }
 }
 
+interface TripListItem {
+  id: string
+  title: string
+  startDate: string
+  endDate: string
+  segmentCount: number
+}
+
 interface MapPlaceholderProps {
+  placeholderMode: 'trip-list' | 'segment-list'
+  tripListItems: TripListItem[]
+  onViewTrip: (tripId: string) => void
+  onOpenTripManager: () => void
+  onDeleteTrip: (tripId: string) => void
+
   filteredSegments: RouteSegment[]
   summary: RouteSummary
   filterContext: FilterContext
   editingSegmentId: string | null
   activeSegmentId: string | null
+  activeSegment: RouteSegment | null
+  activeSegmentDate: string
   onEditSegment: (segmentId: string) => void
   onDeleteSegment: (payload: { segmentId?: string; index: number; name: string }) => void
 
   routeType: RoutePreference
   onChangeRouteType: (value: RoutePreference) => void
+
+  onUpdateSegmentMeta: (segmentId: string, patch: { name: string; date: string }) => void
+  onMoveSegmentInTrip: (segmentId: string, direction: 'up' | 'down') => void
+  canMoveSegmentUp: boolean
+  canMoveSegmentDown: boolean
 
   waypoints: Waypoint[]
   onLocateWaypoint: (waypoint: Waypoint) => void
@@ -48,17 +69,27 @@ interface MapPlaceholderProps {
   onSelectEndpointPlace: (field: 'startPoint' | 'endPoint', payload: { label: string; lat: number; lng: number; amapId?: string }) => void
 }
 
-// 地图占位组件：展示筛选结果、路线级编辑入口、途经点与起终点编辑。
 function MapPlaceholder({
+  placeholderMode,
+  tripListItems,
+  onViewTrip,
+  onOpenTripManager,
+  onDeleteTrip,
   filteredSegments,
   summary,
   filterContext,
   editingSegmentId,
   activeSegmentId,
+  activeSegment,
+  activeSegmentDate,
   onEditSegment,
   onDeleteSegment,
   routeType,
   onChangeRouteType,
+  onUpdateSegmentMeta,
+  onMoveSegmentInTrip,
+  canMoveSegmentUp,
+  canMoveSegmentDown,
   waypoints,
   onLocateWaypoint,
   waypointEditMode,
@@ -78,6 +109,47 @@ function MapPlaceholder({
   onUpdateEndpointText,
   onSelectEndpointPlace,
 }: MapPlaceholderProps) {
+  // all-trips 时占位区显示“旅程列表模式”；底部真实地图仍由 mapRenderSegments 绘制总览。
+  if (placeholderMode === 'trip-list') {
+    return (
+      <section className="card-section">
+        <h2>3) 地图占位区</h2>
+        <p>当前筛选：旅程【{filterContext.tripName}】 / 日期【{filterContext.dayDate}】 / 路段【{filterContext.segmentName}】</p>
+        <p className="hint-text">已切换为“所有旅程列表”视图，便于管理旅程。</p>
+        <ul className="trip-placeholder-list">
+          {tripListItems.map((trip) => (
+            <li key={trip.id} className="trip-placeholder-item">
+              <div className="trip-main-meta">
+                <strong>{trip.title}</strong>
+                <small>
+                  {trip.startDate} ~ {trip.endDate} · {trip.segmentCount} 条路段
+                </small>
+              </div>
+              <div className="trip-item-actions">
+                <button type="button" onClick={() => onViewTrip(trip.id)}>
+                  查看
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onViewTrip(trip.id)
+                    onOpenTripManager()
+                  }}
+                >
+                  编辑
+                </button>
+                <button type="button" className="danger-btn" onClick={() => onDeleteTrip(trip.id)}>
+                  删除
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+        {!tripListItems.length && <p className="hint-text">暂无旅程，请先在上方新增旅程。</p>}
+      </section>
+    )
+  }
+
   return (
     <section className="card-section">
       <h2>3) 地图占位区</h2>
@@ -89,6 +161,45 @@ function MapPlaceholder({
       </p>
 
       <p>当前筛选路段数量：{filteredSegments.length}</p>
+
+      {!!activeSegment && (
+        <div className="segment-meta-editor">
+          <p>轨迹信息</p>
+          <div className="segment-meta-row">
+            <label>
+              轨迹名称
+              <input
+                value={activeSegment.name}
+                onChange={(event) =>
+                  onUpdateSegmentMeta(activeSegment.id, { name: event.target.value, date: activeSegmentDate })
+                }
+              />
+            </label>
+            <label>
+              对应日期
+              <input
+                type="date"
+                value={activeSegmentDate}
+                onChange={(event) =>
+                  onUpdateSegmentMeta(activeSegment.id, { name: activeSegment.name, date: event.target.value })
+                }
+              />
+            </label>
+          </div>
+          <div className="trip-item-actions">
+            <button type="button" onClick={() => onMoveSegmentInTrip(activeSegment.id, 'up')} disabled={!canMoveSegmentUp}>
+              上移
+            </button>
+            <button
+              type="button"
+              onClick={() => onMoveSegmentInTrip(activeSegment.id, 'down')}
+              disabled={!canMoveSegmentDown}
+            >
+              下移
+            </button>
+          </div>
+        </div>
+      )}
 
       <label className="route-type-control">
         路线类型
