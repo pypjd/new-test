@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createInputTipsProxyHandler } from '../server/amapInputTipsProxy.js'
+import { createInputTipsProxyHandler } from '../backend/src/amapInputTipsProxy.js'
 
 function makeReq(url, headers = {}) {
   return {
