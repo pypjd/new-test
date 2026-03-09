@@ -10,6 +10,7 @@ import type {
   CoordPoint,
   FilterState,
   RoutePreference,
+  RouteType,
   RouteSegment,
   RouteSummary,
   Trip,
@@ -222,6 +223,7 @@ function App() {
     endPoint: string
     viaPointsText: string
     preference: RoutePreference
+    routeType: RouteType
     startCoord?: CoordPoint
     endCoord?: CoordPoint
     startPlaceId?: string
@@ -240,6 +242,7 @@ function App() {
           endPoint: payload.endPoint,
           viaPointsText: payload.viaPointsText,
           preference: payload.preference,
+          routeType: payload.routeType,
           startCoord: payload.startCoord,
           endCoord: payload.endCoord,
           startPlaceId: payload.startPlaceId,
@@ -514,7 +517,8 @@ function App() {
     })
   }
 
-  const routeTypeValue = activeSegment?.preference ?? 'HIGHWAY_FIRST'
+  const routePreferenceValue = activeSegment?.preference ?? 'HIGHWAY_FIRST'
+  const routeModeValue = activeSegment?.routeType ?? 'DRIVING'
 
   return (
     <main className="app-shell">
@@ -554,8 +558,13 @@ function App() {
         activeSegmentDate={activeSegmentDate}
         onEditSegment={(segmentId) => setEditingSegmentId(segmentId)}
         onDeleteSegment={deleteSegment}
-        routeType={routeTypeValue}
-        onChangeRouteType={(value) => {
+        routePreference={routePreferenceValue}
+        routeMode={routeModeValue}
+        onChangeRouteMode={(value) => {
+          if (!activeSegmentId) return
+          updateSegment(activeSegmentId, (segment) => ({ ...segment, routeType: value }))
+        }}
+        onChangeRoutePreference={(value) => {
           if (!activeSegmentId) return
           updateSegment(activeSegmentId, (segment) => ({ ...segment, preference: value }))
         }}
