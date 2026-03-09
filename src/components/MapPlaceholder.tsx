@@ -1,5 +1,5 @@
 import PlaceAutocomplete from './PlaceAutocomplete'
-import type { RoutePreference, RouteSegment, RouteSummary, Waypoint } from '../types/trip'
+import type { RoutePreference, RouteSegment, RouteSummary, RouteType, Waypoint } from '../types/trip'
 
 interface FilterContext {
   tripName: string
@@ -40,8 +40,10 @@ interface MapPlaceholderProps {
   onEditSegment: (segmentId: string) => void
   onDeleteSegment: (payload: { segmentId?: string; index: number; name: string }) => void
 
-  routeType: RoutePreference
-  onChangeRouteType: (value: RoutePreference) => void
+  routePreference: RoutePreference
+  routeMode: RouteType
+  onChangeRouteMode: (value: RouteType) => void
+  onChangeRoutePreference: (value: RoutePreference) => void
 
   onUpdateSegmentMeta: (segmentId: string, patch: { name: string; date: string }) => void
   onMoveSegmentInTrip: (segmentId: string, direction: 'up' | 'down') => void
@@ -84,8 +86,10 @@ function MapPlaceholder({
   activeSegmentDate,
   onEditSegment,
   onDeleteSegment,
-  routeType,
-  onChangeRouteType,
+  routePreference,
+  routeMode,
+  onChangeRouteMode,
+  onChangeRoutePreference,
   onUpdateSegmentMeta,
   onMoveSegmentInTrip,
   canMoveSegmentUp,
@@ -203,12 +207,21 @@ function MapPlaceholder({
 
       <label className="route-type-control">
         路线类型
-        <select value={routeType} onChange={(e) => onChangeRouteType(e.target.value as RoutePreference)}>
+        <select value={routeMode} onChange={(e) => onChangeRouteMode(e.target.value as RouteType)}>
+          <option value="DRIVING">驾车路线</option>
+          <option value="CYCLING">骑行路线（走小路）</option>
+        </select>
+      </label>
+
+      <label className="route-type-control">
+        路线策略
+        <select
+          value={routePreference}
+          onChange={(e) => onChangeRoutePreference(e.target.value as RoutePreference)}
+          disabled={routeMode === 'CYCLING'}
+        >
           <option value="HIGHWAY_FIRST">高速优先</option>
-          <option value="LESS_TOLL">避开高速</option>
-          <option value="NORMAL_ROAD_FIRST">普通道路优先</option>
           <option value="AVOID_TOLL">避免收费</option>
-          <option value="SHORTEST_TIME">最短时间</option>
         </select>
       </label>
 
