@@ -95,8 +95,11 @@ function App() {
     if (editingSegmentId && listViewSegments.some((segment) => segment.id === editingSegmentId)) {
       return editingSegmentId
     }
-    return listViewSegments[0]?.id ?? null
-  }, [listViewSegments, editingSegmentId])
+    if (filters.segmentId && listViewSegments.some((segment) => segment.id === filters.segmentId)) {
+      return filters.segmentId
+    }
+    return null
+  }, [listViewSegments, editingSegmentId, filters.segmentId])
 
   const activeSegment = useMemo(
     () => listViewSegments.find((segment) => segment.id === activeSegmentId) ?? null,
