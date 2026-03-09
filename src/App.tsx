@@ -192,13 +192,6 @@ function App() {
     if (current < 0 || target < 0 || target >= flat.length) return false
     return flat[target].dayId === ref.day.id
   }
-
-  const updateTripDateRangeByDays = (trip: Trip): Trip => {
-    const dates = trip.days.map((day) => day.date).sort()
-    if (!dates.length) return trip
-    return { ...trip, startDate: dates[0], endDate: dates[dates.length - 1] }
-  }
-
   const addTrip = (payload: { title: string; startDate: string; endDate: string }) => {
     setTripReview((prev) => ({
       trips: [
@@ -251,18 +244,18 @@ function App() {
         }
 
         if (!matchedDay) {
-          return updateTripDateRangeByDays({
+          return {
             ...trip,
             days: [...trip.days, { id: payload.dayDate, date: payload.dayDate, routeSegments: [nextSegment] }],
-          })
+          }
         }
 
-        return updateTripDateRangeByDays({
+        return {
           ...trip,
           days: trip.days.map((day) =>
             day.date !== payload.dayDate ? day : { ...day, routeSegments: [...day.routeSegments, nextSegment] },
           ),
-        })
+        }
       }),
     }))
   }
@@ -302,7 +295,7 @@ function App() {
                   ),
                 },
           )
-          return updateTripDateRangeByDays({ ...trip, days })
+          return { ...trip, days }
         }
 
         const movedSegment = { ...ref.segment, name: nextName, date: nextDate }
@@ -322,7 +315,7 @@ function App() {
               )
             : [...daysAfterRemoval, { id: nextDate, date: nextDate, routeSegments: [movedSegment] }]
 
-        return updateTripDateRangeByDays({ ...trip, days: days.sort((a, b) => a.date.localeCompare(b.date)) })
+        return { ...trip, days: days.sort((a, b) => a.date.localeCompare(b.date)) }
       })
 
       return { trips: nextTrips }
