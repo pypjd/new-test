@@ -33,6 +33,7 @@ export interface RouteSegment {
   startPlaceId?: string
   endPlaceId?: string
   points?: CoordPoint[]
+  distanceMeters?: number
   waypoints?: Waypoint[]
 }
 
@@ -63,5 +64,4 @@ export interface FilterState {
 
 export interface RouteSummary {
   totalDistanceText: string
-  totalDurationText: string
 }

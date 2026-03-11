@@ -6,6 +6,7 @@ import TripEditor from './components/TripEditor'
 import TripManageModal from './components/TripManageModal'
 import { useFilteredSegments } from './hooks/useFilteredSegments'
 import { loadTripReview, saveTripReview } from './services/tripStorage'
+import { formatDistance, getDayDistanceMeters, getTrackDistanceMeters, getTripDistanceMeters } from './utils/distance'
 import type {
   CoordPoint,
   FilterState,
@@ -62,9 +63,10 @@ function App() {
   const mapRenderSegments = useFilteredSegments(tripReview.trips, filters)
   const listViewSegments = placeholderMode === 'segment-list' ? mapRenderSegments : []
 
-  const summary: RouteSummary = useMemo(
-    () => ({ totalDistanceText: '待生成', totalDurationText: '待生成' }),
-    [],
+  const selectedTrip = useMemo(() => tripReview.trips.find((trip) => trip.id === filters.tripId) ?? null, [tripReview.trips, filters.tripId])
+  const selectedDay = useMemo(
+    () => selectedTrip?.days.find((day) => day.id === filters.dayId) ?? null,
+    [selectedTrip, filters.dayId],
   )
 
   const tripListItems = useMemo(
@@ -75,9 +77,13 @@ function App() {
         startDate: trip.startDate,
         endDate: trip.endDate,
         segmentCount: trip.days.reduce((sum, day) => sum + day.routeSegments.length, 0),
+        tripDistanceText: formatDistance(getTripDistanceMeters(trip)),
       })),
     [tripReview.trips],
   )
+
+  const tripDistanceText = useMemo(() => formatDistance(selectedTrip ? getTripDistanceMeters(selectedTrip) : null), [selectedTrip])
+  const dayDistanceText = useMemo(() => formatDistance(selectedDay ? getDayDistanceMeters(selectedDay.routeSegments) : null), [selectedDay])
 
   const filterContext = useMemo(() => {
     const selectedTrip = tripReview.trips.find((trip) => trip.id === filters.tripId)
@@ -104,6 +110,11 @@ function App() {
   const activeSegment = useMemo(
     () => listViewSegments.find((segment) => segment.id === activeSegmentId) ?? null,
     [listViewSegments, activeSegmentId],
+  )
+
+  const summary: RouteSummary = useMemo(
+    () => ({ totalDistanceText: formatDistance(activeSegment ? getTrackDistanceMeters(activeSegment) : null) }),
+    [activeSegment],
   )
 
   const displayedWaypoints = useMemo<Waypoint[]>(() => {
@@ -345,6 +356,11 @@ function App() {
     setEditingSegmentId(null)
   }
 
+  const saveSegmentDistance = (segmentId: string, distanceMeters: number | null) => {
+    if (typeof distanceMeters !== 'number' || !Number.isFinite(distanceMeters) || distanceMeters <= 0) return
+    updateSegment(segmentId, (segment) => ({ ...segment, distanceMeters: Math.round(distanceMeters) }))
+  }
+
   const startWaypointEdit = (segmentId: string) => {
     const target = listViewSegments.find((segment) => segment.id === segmentId)
     setEditingWaypointSegmentId(segmentId)
@@ -527,6 +543,8 @@ function App() {
         filters={filters}
         onChange={setFilters}
         onOpenTripManager={() => setTripManagerOpen(true)}
+        tripDistanceText={tripDistanceText}
+        dayDistanceText={dayDistanceText}
       />
 
       <TripManageModal
@@ -653,6 +671,7 @@ function App() {
         onSaveEdit={saveSegmentTrack}
         selectedWaypoint={selectedWaypoint}
         onTracksComputed={setSegmentTrackPoints}
+        onDistanceComputed={saveSegmentDistance}
         endpointDraft={effectiveEndpointDraft}
         onEndpointDraftChange={(payload) => {
           setEndpointDraft((prev) => {

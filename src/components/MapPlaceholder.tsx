@@ -1,5 +1,6 @@
 import PlaceAutocomplete from './PlaceAutocomplete'
 import type { RoutePreference, RouteSegment, RouteSummary, RouteType, Waypoint } from '../types/trip'
+import { formatDistance, getTrackDistanceMeters } from '../utils/distance'
 
 interface FilterContext {
   tripName: string
@@ -21,6 +22,7 @@ interface TripListItem {
   startDate: string
   endDate: string
   segmentCount: number
+  tripDistanceText: string
 }
 
 interface MapPlaceholderProps {
@@ -126,7 +128,7 @@ function MapPlaceholder({
               <div className="trip-main-meta">
                 <strong>{trip.title}</strong>
                 <small>
-                  {trip.startDate} ~ {trip.endDate} · {trip.segmentCount} 条路段
+                  {trip.startDate} ~ {trip.endDate} · {trip.segmentCount} 条路段 · 旅程总里程：{trip.tripDistanceText}
                 </small>
               </div>
               <div className="trip-item-actions">
@@ -213,7 +215,10 @@ function MapPlaceholder({
       <ul className="route-list">
         {filteredSegments.map((segment, index) => (
           <li key={segment.id} className={segment.id === activeSegmentId ? 'active' : ''}>
-            <span>{segment.name}</span>
+            <span>
+              {segment.name}
+              <small> · 里程：{formatDistance(getTrackDistanceMeters(segment))}</small>
+            </span>
             <div className="route-actions">
               <button type="button" onClick={() => onEditSegment(segment.id)}>
                 {editingSegmentId === segment.id ? '编辑中' : '编辑轨迹'}
@@ -393,7 +398,6 @@ function MapPlaceholder({
         </div>
 
         <p>总里程：{summary.totalDistanceText}</p>
-        <p>总时长：{summary.totalDurationText}</p>
         </>
       )}
     </section>

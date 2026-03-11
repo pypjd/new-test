@@ -49,6 +49,7 @@ export interface DrivingRouteResult {
   polyline: Array<[number, number]>
   distanceText: string
   durationText: string
+  distanceMeters?: number
   routeKey: string
   fromCache?: boolean
 }
@@ -329,7 +330,7 @@ export async function requestDrivingRoute(
   destLngLat: string,
   strategy = '0',
   waypoints?: string,
-): Promise<{ polyline: Array<[number, number]>; distanceText: string; durationText: string }> {
+): Promise<{ polyline: Array<[number, number]>; distanceText: string; durationText: string; distanceMeters?: number }> {
   const url = new URL('/api/amap/direction', window.location.origin)
   url.searchParams.set('origin', originLngLat)
   url.searchParams.set('destination', destLngLat)
@@ -397,6 +398,70 @@ export async function requestDrivingRoute(
     polyline: pointsList,
     distanceText: path.distance ? `${path.distance} 米` : '未知',
     durationText: path.duration ? `${path.duration} 秒` : '未知',
+    distanceMeters: path.distance ? Number(path.distance) : undefined,
+  }
+}
+
+export async function requestCyclingRoute(
+  originLngLat: string,
+  destLngLat: string,
+): Promise<{ polyline: Array<[number, number]>; distanceText: string; durationText: string; distanceMeters?: number }> {
+  const url = new URL('/api/amap/cycling-direction', window.location.origin)
+  url.searchParams.set('origin', originLngLat)
+  url.searchParams.set('destination', destLngLat)
+
+  const response = await fetch(`${url.pathname}${url.search}`)
+  const raw = (await response.json()) as {
+    ok?: boolean
+    message?: string
+    data?: {
+      errcode?: number
+      errmsg?: string
+      data?: {
+        paths?: Array<{
+          distance?: number
+          duration?: number
+          steps?: Array<{ polyline?: string }>
+        }>
+      }
+    }
+  }
+
+  if (!response.ok || !raw.ok) {
+    throw new Error(raw.message || 'cycling direction failed')
+  }
+
+  const payload = raw.data
+  if (!payload || payload.errcode !== 0) {
+    throw new Error(payload?.errmsg || 'cycling direction failed')
+  }
+
+  const path = payload.data?.paths?.[0]
+  if (!path) throw new Error('高德未返回可用骑行路线。')
+
+  const pointsList: Array<[number, number]> = []
+  const seen = new Set<string>()
+  for (const step of path.steps ?? []) {
+    if (!step.polyline) continue
+    for (const rawPair of step.polyline.split(';')) {
+      const parsed = parseLocationText(rawPair)
+      if (!parsed) continue
+      const key = `${parsed.lat.toFixed(6)},${parsed.lng.toFixed(6)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      pointsList.push([parsed.lat, parsed.lng])
+    }
+  }
+
+  if (!pointsList.length) {
+    throw new Error('高德返回骑行路线为空。')
+  }
+
+  return {
+    polyline: pointsList,
+    distanceText: typeof path.distance === 'number' ? `${path.distance} 米` : '未知',
+    durationText: typeof path.duration === 'number' ? `${path.duration} 秒` : '未知',
+    distanceMeters: typeof path.distance === 'number' ? path.distance : undefined,
   }
 }
 
@@ -481,6 +546,7 @@ async function planDrivingRouteRaw(
         polyline: result.polyline,
         distanceText: result.distanceText,
         durationText: result.durationText,
+        distanceMeters: result.distanceMeters,
         routeKey,
       },
       error: null,
@@ -552,6 +618,7 @@ export async function planCyclingRoute(
       polyline,
       distanceText: `${Math.round(distanceMeters)} 米`,
       durationText: `${Math.round(durationSeconds)} 秒`,
+      distanceMeters: Math.round(distanceMeters),
       routeKey,
     }
     routeCache.set(routeKey, route)
