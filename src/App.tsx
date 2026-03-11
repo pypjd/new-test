@@ -15,6 +15,7 @@ import type {
   RouteSegment,
   RouteSummary,
   Trip,
+  TripCategory,
   TripDay,
   TripReview,
   Waypoint,
@@ -46,6 +47,7 @@ interface SegmentRef {
 
 function App() {
   const [tripReview, setTripReview] = useState<TripReview>(() => loadTripReview())
+  const [activeWorkspace, setActiveWorkspace] = useState<TripCategory>('review')
   const [filters, setFilters] = useState<FilterState>({ tripId: '', dayId: '', segmentId: '' })
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null)
   const [selectedWaypointId, setSelectedWaypointId] = useState<string | null>(null)
@@ -63,14 +65,47 @@ function App() {
     saveTripReview(tripReview)
   }, [tripReview])
 
+  const workspaceTrips = useMemo(
+    () =>
+      tripReview.trips
+        .filter((trip) => trip.category === activeWorkspace)
+        .sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER)),
+    [tripReview.trips, activeWorkspace],
+  )
+
+  useEffect(() => {
+    setFilters((prev) => {
+      const firstTrip = workspaceTrips[0]
+      if (!firstTrip) return { tripId: '', dayId: '', segmentId: '' }
+
+      const selectedTrip = workspaceTrips.find((trip) => trip.id === prev.tripId) ?? firstTrip
+      const selectedDay = selectedTrip.days.find((day) => day.id === prev.dayId) ?? selectedTrip.days[0]
+      const selectedSegment = selectedDay?.routeSegments.find((segment) => segment.id === prev.segmentId) ?? selectedDay?.routeSegments[0]
+
+      return {
+        tripId: selectedTrip.id,
+        dayId: selectedDay?.id ?? '',
+        segmentId: selectedSegment?.id ?? '',
+      }
+    })
+
+    setEditingSegmentId(null)
+    setSelectedWaypointId(null)
+    setEditingWaypointSegmentId(null)
+    setWaypointDrafts([])
+    setEditingEndpointsSegmentId(null)
+    setEndpointDraft(null)
+    setSegmentMetaDraft(null)
+  }, [activeWorkspace, workspaceTrips])
+
   const isAllTripsSelected = !filters.tripId
   // 占位区和底图渲染逻辑解耦：all 时占位区展示旅程列表，底图仍渲染 mapRenderSegments 总览轨迹。
   const placeholderMode: 'trip-list' | 'segment-list' = isAllTripsSelected ? 'trip-list' : 'segment-list'
 
-  const mapRenderSegments = useFilteredSegments(tripReview.trips, filters)
+  const mapRenderSegments = useFilteredSegments(workspaceTrips, filters)
   const listViewSegments = placeholderMode === 'segment-list' ? mapRenderSegments : []
 
-  const selectedTrip = useMemo(() => tripReview.trips.find((trip) => trip.id === filters.tripId) ?? null, [tripReview.trips, filters.tripId])
+  const selectedTrip = useMemo(() => workspaceTrips.find((trip) => trip.id === filters.tripId) ?? null, [workspaceTrips, filters.tripId])
   const selectedDay = useMemo(
     () => selectedTrip?.days.find((day) => day.id === filters.dayId) ?? null,
     [selectedTrip, filters.dayId],
@@ -78,7 +113,7 @@ function App() {
 
   const tripListItems = useMemo(
     () =>
-      tripReview.trips.map((trip) => ({
+      workspaceTrips.map((trip) => ({
         id: trip.id,
         title: trip.title,
         startDate: trip.startDate,
@@ -86,14 +121,14 @@ function App() {
         segmentCount: trip.days.reduce((sum, day) => sum + day.routeSegments.length, 0),
         tripDistanceText: formatDistance(getTripDistanceMeters(trip)),
       })),
-    [tripReview.trips],
+    [workspaceTrips],
   )
 
   const tripDistanceText = useMemo(() => formatDistance(selectedTrip ? getTripDistanceMeters(selectedTrip) : null), [selectedTrip])
   const dayDistanceText = useMemo(() => formatDistance(selectedDay ? getDayDistanceMeters(selectedDay.routeSegments) : null), [selectedDay])
 
   const filterContext = useMemo(() => {
-    const selectedTrip = tripReview.trips.find((trip) => trip.id === filters.tripId)
+    const selectedTrip = workspaceTrips.find((trip) => trip.id === filters.tripId)
     const selectedDay = selectedTrip?.days.find((day) => day.id === filters.dayId)
     const selectedSegment = selectedDay?.routeSegments.find((segment) => segment.id === filters.segmentId)
 
@@ -102,7 +137,7 @@ function App() {
       dayDate: selectedDay?.date ?? '全部日期',
       segmentName: selectedSegment?.name ?? '全部路段',
     }
-  }, [tripReview.trips, filters.tripId, filters.dayId, filters.segmentId])
+  }, [workspaceTrips, filters.tripId, filters.dayId, filters.segmentId])
 
   const activeSegmentId = useMemo(() => {
     if (editingSegmentId && listViewSegments.some((segment) => segment.id === editingSegmentId)) {
@@ -222,7 +257,8 @@ function App() {
           title: payload.title,
           startDate: payload.startDate,
           endDate: payload.endDate,
-          order: prev.trips.length,
+          category: activeWorkspace,
+          order: prev.trips.filter((trip) => trip.category === activeWorkspace).length,
           days: [],
         },
       ],
@@ -500,7 +536,7 @@ function App() {
   }
 
   const deleteTrip = (tripId: string) => {
-    const target = tripReview.trips.find((trip) => trip.id === tripId)
+    const target = workspaceTrips.find((trip) => trip.id === tripId)
     if (!target) return
 
     const segmentCount = target.days.reduce((sum, day) => sum + day.routeSegments.length, 0)
@@ -551,26 +587,41 @@ function App() {
 
   const moveTrip = (tripId: string, direction: 'up' | 'down') => {
     setTripReview((prev) => {
-      const idx = prev.trips.findIndex((trip) => trip.id === tripId)
+      const scopedTrips = prev.trips.filter((trip) => trip.category === activeWorkspace)
+      const idx = scopedTrips.findIndex((trip) => trip.id === tripId)
       if (idx < 0) return prev
       const target = direction === 'up' ? idx - 1 : idx + 1
-      if (target < 0 || target >= prev.trips.length) return prev
-      const nextTrips = [...prev.trips]
-      const [moved] = nextTrips.splice(idx, 1)
-      nextTrips.splice(target, 0, moved)
-      return { trips: nextTrips.map((trip, order) => ({ ...trip, order })) }
+      if (target < 0 || target >= scopedTrips.length) return prev
+
+      const movedScoped = [...scopedTrips]
+      const [moved] = movedScoped.splice(idx, 1)
+      movedScoped.splice(target, 0, moved)
+      const orderMap = new Map(movedScoped.map((trip, order) => [trip.id, order]))
+
+      return {
+        trips: prev.trips.map((trip) =>
+          trip.category === activeWorkspace ? { ...trip, order: orderMap.get(trip.id) ?? trip.order } : trip,
+        ),
+      }
     })
   }
 
   const reorderTrips = (orderedTripIds: string[]) => {
     setTripReview((prev) => {
-      if (orderedTripIds.length !== prev.trips.length) return prev
-      const map = new Map(prev.trips.map((trip) => [trip.id, trip]))
-      const nextTrips = orderedTripIds
-        .map((id) => map.get(id))
+      const scopedTrips = prev.trips.filter((trip) => trip.category === activeWorkspace)
+      if (orderedTripIds.length !== scopedTrips.length) return prev
+      const scopedMap = new Map(scopedTrips.map((trip) => [trip.id, trip]))
+      const orderedScoped = orderedTripIds
+        .map((id) => scopedMap.get(id))
         .filter((trip): trip is (typeof prev.trips)[number] => Boolean(trip))
-      if (nextTrips.length !== prev.trips.length) return prev
-      return { trips: nextTrips.map((trip, order) => ({ ...trip, order })) }
+      if (orderedScoped.length !== scopedTrips.length) return prev
+
+      const orderMap = new Map(orderedScoped.map((trip, order) => [trip.id, order]))
+      return {
+        trips: prev.trips.map((trip) =>
+          trip.category === activeWorkspace ? { ...trip, order: orderMap.get(trip.id) ?? trip.order } : trip,
+        ),
+      }
     })
   }
 
@@ -579,12 +630,30 @@ function App() {
 
   return (
     <main className="app-shell">
-      <h1>自驾旅行复盘工具（开发中）</h1>
+      <header className="app-header">
+        <h1>自驾旅行记录与规划工具（开发中）</h1>
+        <div className="workspace-tabs" role="tablist" aria-label="总分类">
+          <button
+            type="button"
+            className={activeWorkspace === 'review' ? 'active' : ''}
+            onClick={() => setActiveWorkspace('review')}
+          >
+            复盘
+          </button>
+          <button
+            type="button"
+            className={activeWorkspace === 'plan' ? 'active' : ''}
+            onClick={() => setActiveWorkspace('plan')}
+          >
+            规划
+          </button>
+        </div>
+      </header>
 
-      <TripEditor trips={tripReview.trips} onAddTrip={addTrip} onAddSegment={addSegment} />
+      <TripEditor trips={workspaceTrips} onAddTrip={addTrip} onAddSegment={addSegment} />
 
       <FilterPanel
-        trips={tripReview.trips}
+        trips={workspaceTrips}
         filters={filters}
         onChange={setFilters}
         onOpenTripManager={() => setTripManagerOpen(true)}
@@ -594,7 +663,7 @@ function App() {
 
       <TripManageModal
         open={tripManagerOpen}
-        trips={tripReview.trips}
+        trips={workspaceTrips}
         onClose={() => setTripManagerOpen(false)}
         onDeleteTrip={deleteTrip}
         onMoveTrip={moveTrip}

@@ -2,6 +2,7 @@
 
 export type RoutePreference = 'HIGHWAY_FIRST' | 'AVOID_TOLL'
 export type RouteType = 'DRIVING' | 'CYCLING'
+export type TripCategory = 'review' | 'plan'
 
 export interface CoordPoint {
   lat: number
@@ -46,6 +47,7 @@ export interface TripDay {
 export interface Trip {
   id: string
   title: string
+  category: TripCategory
   order?: number
   startDate: string
   endDate: string
