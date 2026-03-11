@@ -16,6 +16,12 @@ interface EndpointDraft {
   endCoord?: { lat: number; lon: number }
 }
 
+interface SegmentMetaDraft {
+  segmentId: string
+  name: string
+  date: string
+}
+
 interface TripListItem {
   id: string
   title: string
@@ -39,15 +45,19 @@ interface MapPlaceholderProps {
   activeSegmentId: string | null
   activeSegment: RouteSegment | null
   activeSegmentDate: string
+  segmentMetaDraft: SegmentMetaDraft | null
   onEditSegment: (segmentId: string) => void
   onDeleteSegment: (payload: { segmentId?: string; index: number; name: string }) => void
+  onStartSegmentMetaEdit: (segmentId: string) => void
+  onCancelSegmentMetaEdit: () => void
+  onSaveSegmentMetaEdit: () => void
+  onUpdateSegmentMetaDraft: (patch: { name?: string; date?: string }) => void
 
   routePreference: RoutePreference
   routeMode: RouteType
   onChangeRouteMode: (value: RouteType) => void
   onChangeRoutePreference: (value: RoutePreference) => void
 
-  onUpdateSegmentMeta: (segmentId: string, patch: { name: string; date: string }) => void
   onMoveSegmentInTrip: (segmentId: string, direction: 'up' | 'down') => void
   canMoveSegmentUp: boolean
   canMoveSegmentDown: boolean
@@ -86,13 +96,17 @@ function MapPlaceholder({
   activeSegmentId,
   activeSegment,
   activeSegmentDate,
+  segmentMetaDraft,
   onEditSegment,
   onDeleteSegment,
+  onStartSegmentMetaEdit,
+  onCancelSegmentMetaEdit,
+  onSaveSegmentMetaEdit,
+  onUpdateSegmentMetaDraft,
   routePreference,
   routeMode,
   onChangeRouteMode,
   onChangeRoutePreference,
-  onUpdateSegmentMeta,
   onMoveSegmentInTrip,
   canMoveSegmentUp,
   canMoveSegmentDown,
@@ -175,24 +189,36 @@ function MapPlaceholder({
       {!!activeSegment && (
         <div className="segment-meta-editor">
           <p>轨迹信息</p>
+          {!segmentMetaDraft || segmentMetaDraft.segmentId !== activeSegment.id ? (
+            <button type="button" onClick={() => onStartSegmentMetaEdit(activeSegment.id)}>
+              编辑轨迹信息
+            </button>
+          ) : (
+            <div className="waypoint-actions">
+              <button type="button" onClick={onSaveSegmentMetaEdit}>
+                保存
+              </button>
+              <button type="button" onClick={onCancelSegmentMetaEdit}>
+                取消
+              </button>
+            </div>
+          )}
           <div className="segment-meta-row">
             <label>
               轨迹名称
               <input
-                value={activeSegment.name}
-                onChange={(event) =>
-                  onUpdateSegmentMeta(activeSegment.id, { name: event.target.value, date: activeSegmentDate })
-                }
+                value={segmentMetaDraft?.segmentId === activeSegment.id ? segmentMetaDraft.name : activeSegment.name}
+                onChange={(event) => onUpdateSegmentMetaDraft({ name: event.target.value })}
+                disabled={segmentMetaDraft?.segmentId !== activeSegment.id}
               />
             </label>
             <label>
               对应日期
               <input
                 type="date"
-                value={activeSegmentDate}
-                onChange={(event) =>
-                  onUpdateSegmentMeta(activeSegment.id, { name: activeSegment.name, date: event.target.value })
-                }
+                value={segmentMetaDraft?.segmentId === activeSegment.id ? segmentMetaDraft.date : activeSegmentDate}
+                onChange={(event) => onUpdateSegmentMetaDraft({ date: event.target.value })}
+                disabled={segmentMetaDraft?.segmentId !== activeSegment.id}
               />
             </label>
           </div>

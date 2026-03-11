@@ -29,6 +29,12 @@ interface EndpointDraft {
   endCoord?: CoordPoint
 }
 
+interface SegmentMetaDraft {
+  segmentId: string
+  name: string
+  date: string
+}
+
 interface SegmentRef {
   tripIndex: number
   dayIndex: number
@@ -50,6 +56,7 @@ function App() {
 
   const [editingEndpointsSegmentId, setEditingEndpointsSegmentId] = useState<string | null>(null)
   const [endpointDraft, setEndpointDraft] = useState<EndpointDraft | null>(null)
+  const [segmentMetaDraft, setSegmentMetaDraft] = useState<SegmentMetaDraft | null>(null)
   const [tripManagerOpen, setTripManagerOpen] = useState(false)
 
   useEffect(() => {
@@ -383,6 +390,22 @@ function App() {
     })
   }, [])
 
+  const startSegmentMetaEdit = (segmentId: string) => {
+    const ref = findSegmentRef(segmentId)
+    if (!ref) return
+    setSegmentMetaDraft({ segmentId, name: ref.segment.name, date: ref.day.date })
+  }
+
+  const cancelSegmentMetaEdit = () => {
+    setSegmentMetaDraft(null)
+  }
+
+  const saveSegmentMetaEdit = () => {
+    if (!segmentMetaDraft) return
+    updateSegmentMeta(segmentMetaDraft.segmentId, { name: segmentMetaDraft.name, date: segmentMetaDraft.date })
+    setSegmentMetaDraft(null)
+  }
+
   const startWaypointEdit = (segmentId: string) => {
     const target = listViewSegments.find((segment) => segment.id === segmentId)
     setEditingWaypointSegmentId(segmentId)
@@ -592,8 +615,15 @@ function App() {
         activeSegmentId={activeSegmentId}
         activeSegment={activeSegment}
         activeSegmentDate={activeSegmentDate}
+        segmentMetaDraft={segmentMetaDraft}
         onEditSegment={(segmentId) => setEditingSegmentId(segmentId)}
         onDeleteSegment={deleteSegment}
+        onStartSegmentMetaEdit={startSegmentMetaEdit}
+        onCancelSegmentMetaEdit={cancelSegmentMetaEdit}
+        onSaveSegmentMetaEdit={saveSegmentMetaEdit}
+        onUpdateSegmentMetaDraft={(patch) => {
+          setSegmentMetaDraft((prev) => (prev ? { ...prev, ...patch } : prev))
+        }}
         routePreference={routePreferenceValue}
         routeMode={routeModeValue}
         onChangeRouteMode={(value) => {
@@ -604,7 +634,6 @@ function App() {
           if (!activeSegmentId) return
           updateSegment(activeSegmentId, (segment) => ({ ...segment, preference: value }))
         }}
-        onUpdateSegmentMeta={updateSegmentMeta}
         onMoveSegmentInTrip={moveSegmentInTrip}
         canMoveSegmentUp={canMoveSegment(activeSegmentId, 'up')}
         canMoveSegmentDown={canMoveSegment(activeSegmentId, 'down')}
