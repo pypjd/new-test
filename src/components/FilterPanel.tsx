@@ -6,10 +6,12 @@ interface FilterPanelProps {
   filters: FilterState
   onChange: (next: FilterState) => void
   onOpenTripManager: () => void
+  dayDistanceText: string
+  tripDistanceText: string
 }
 
 // 筛选区：按“旅程 / 日期 / 路段”逐级筛选，并处理筛选联动重置。
-function FilterPanel({ trips, filters, onChange, onOpenTripManager }: FilterPanelProps) {
+function FilterPanel({ trips, filters, onChange, onOpenTripManager, dayDistanceText, tripDistanceText }: FilterPanelProps) {
   const selectedTrip = trips.find((trip) => trip.id === filters.tripId)
 
   const dayOptions = useMemo(() => {
@@ -82,6 +84,8 @@ function FilterPanel({ trips, filters, onChange, onOpenTripManager }: FilterPane
       {!filters.tripId && <p className="hint-text">已选择“全部旅程”，可查看所有路段。</p>}
       {filters.tripId && !filters.dayId && <p className="hint-text">当前为该旅程下“全部日期”。</p>}
       {filters.dayId && !filters.segmentId && <p className="hint-text">当前为该日期下“全部路段”。</p>}
+      {filters.tripId && <p>旅程总里程：{tripDistanceText}</p>}
+      {filters.dayId && <p>当日总里程：{dayDistanceText}</p>}
     </section>
   )
 }
