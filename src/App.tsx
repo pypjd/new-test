@@ -6,10 +6,12 @@ import TripEditor from './components/TripEditor'
 import TripManageModal from './components/TripManageModal'
 import { useFilteredSegments } from './hooks/useFilteredSegments'
 import { loadTripReview, saveTripReview } from './services/tripStorage'
+import { formatDistance, getDayDistanceMeters, getTrackDistanceMeters, getTripDistanceMeters } from './utils/distance'
 import type {
   CoordPoint,
   FilterState,
   RoutePreference,
+  RouteType,
   RouteSegment,
   RouteSummary,
   Trip,
@@ -61,9 +63,10 @@ function App() {
   const mapRenderSegments = useFilteredSegments(tripReview.trips, filters)
   const listViewSegments = placeholderMode === 'segment-list' ? mapRenderSegments : []
 
-  const summary: RouteSummary = useMemo(
-    () => ({ totalDistanceText: '待生成', totalDurationText: '待生成' }),
-    [],
+  const selectedTrip = useMemo(() => tripReview.trips.find((trip) => trip.id === filters.tripId) ?? null, [tripReview.trips, filters.tripId])
+  const selectedDay = useMemo(
+    () => selectedTrip?.days.find((day) => day.id === filters.dayId) ?? null,
+    [selectedTrip, filters.dayId],
   )
 
   const tripListItems = useMemo(
@@ -74,9 +77,13 @@ function App() {
         startDate: trip.startDate,
         endDate: trip.endDate,
         segmentCount: trip.days.reduce((sum, day) => sum + day.routeSegments.length, 0),
+        tripDistanceText: formatDistance(getTripDistanceMeters(trip)),
       })),
     [tripReview.trips],
   )
+
+  const tripDistanceText = useMemo(() => formatDistance(selectedTrip ? getTripDistanceMeters(selectedTrip) : null), [selectedTrip])
+  const dayDistanceText = useMemo(() => formatDistance(selectedDay ? getDayDistanceMeters(selectedDay.routeSegments) : null), [selectedDay])
 
   const filterContext = useMemo(() => {
     const selectedTrip = tripReview.trips.find((trip) => trip.id === filters.tripId)
@@ -94,12 +101,20 @@ function App() {
     if (editingSegmentId && listViewSegments.some((segment) => segment.id === editingSegmentId)) {
       return editingSegmentId
     }
-    return listViewSegments[0]?.id ?? null
-  }, [listViewSegments, editingSegmentId])
+    if (filters.segmentId && listViewSegments.some((segment) => segment.id === filters.segmentId)) {
+      return filters.segmentId
+    }
+    return null
+  }, [listViewSegments, editingSegmentId, filters.segmentId])
 
   const activeSegment = useMemo(
     () => listViewSegments.find((segment) => segment.id === activeSegmentId) ?? null,
     [listViewSegments, activeSegmentId],
+  )
+
+  const summary: RouteSummary = useMemo(
+    () => ({ totalDistanceText: formatDistance(activeSegment ? getTrackDistanceMeters(activeSegment) : null) }),
+    [activeSegment],
   )
 
   const displayedWaypoints = useMemo<Waypoint[]>(() => {
@@ -191,13 +206,6 @@ function App() {
     if (current < 0 || target < 0 || target >= flat.length) return false
     return flat[target].dayId === ref.day.id
   }
-
-  const updateTripDateRangeByDays = (trip: Trip): Trip => {
-    const dates = trip.days.map((day) => day.date).sort()
-    if (!dates.length) return trip
-    return { ...trip, startDate: dates[0], endDate: dates[dates.length - 1] }
-  }
-
   const addTrip = (payload: { title: string; startDate: string; endDate: string }) => {
     setTripReview((prev) => ({
       trips: [
@@ -222,6 +230,7 @@ function App() {
     endPoint: string
     viaPointsText: string
     preference: RoutePreference
+    routeType: RouteType
     startCoord?: CoordPoint
     endCoord?: CoordPoint
     startPlaceId?: string
@@ -240,6 +249,7 @@ function App() {
           endPoint: payload.endPoint,
           viaPointsText: payload.viaPointsText,
           preference: payload.preference,
+          routeType: payload.routeType,
           startCoord: payload.startCoord,
           endCoord: payload.endCoord,
           startPlaceId: payload.startPlaceId,
@@ -248,18 +258,18 @@ function App() {
         }
 
         if (!matchedDay) {
-          return updateTripDateRangeByDays({
+          return {
             ...trip,
             days: [...trip.days, { id: payload.dayDate, date: payload.dayDate, routeSegments: [nextSegment] }],
-          })
+          }
         }
 
-        return updateTripDateRangeByDays({
+        return {
           ...trip,
           days: trip.days.map((day) =>
             day.date !== payload.dayDate ? day : { ...day, routeSegments: [...day.routeSegments, nextSegment] },
           ),
-        })
+        }
       }),
     }))
   }
@@ -299,7 +309,7 @@ function App() {
                   ),
                 },
           )
-          return updateTripDateRangeByDays({ ...trip, days })
+          return { ...trip, days }
         }
 
         const movedSegment = { ...ref.segment, name: nextName, date: nextDate }
@@ -319,7 +329,7 @@ function App() {
               )
             : [...daysAfterRemoval, { id: nextDate, date: nextDate, routeSegments: [movedSegment] }]
 
-        return updateTripDateRangeByDays({ ...trip, days: days.sort((a, b) => a.date.localeCompare(b.date)) })
+        return { ...trip, days: days.sort((a, b) => a.date.localeCompare(b.date)) }
       })
 
       return { trips: nextTrips }
@@ -344,6 +354,11 @@ function App() {
       points: payload.points,
     }))
     setEditingSegmentId(null)
+  }
+
+  const saveSegmentDistance = (segmentId: string, distanceMeters: number | null) => {
+    if (typeof distanceMeters !== 'number' || !Number.isFinite(distanceMeters) || distanceMeters <= 0) return
+    updateSegment(segmentId, (segment) => ({ ...segment, distanceMeters: Math.round(distanceMeters) }))
   }
 
   const startWaypointEdit = (segmentId: string) => {
@@ -514,7 +529,8 @@ function App() {
     })
   }
 
-  const routeTypeValue = activeSegment?.preference ?? 'HIGHWAY_FIRST'
+  const routePreferenceValue = activeSegment?.preference ?? 'HIGHWAY_FIRST'
+  const routeModeValue = activeSegment?.routeType ?? 'DRIVING'
 
   return (
     <main className="app-shell">
@@ -527,6 +543,8 @@ function App() {
         filters={filters}
         onChange={setFilters}
         onOpenTripManager={() => setTripManagerOpen(true)}
+        tripDistanceText={tripDistanceText}
+        dayDistanceText={dayDistanceText}
       />
 
       <TripManageModal
@@ -554,8 +572,13 @@ function App() {
         activeSegmentDate={activeSegmentDate}
         onEditSegment={(segmentId) => setEditingSegmentId(segmentId)}
         onDeleteSegment={deleteSegment}
-        routeType={routeTypeValue}
-        onChangeRouteType={(value) => {
+        routePreference={routePreferenceValue}
+        routeMode={routeModeValue}
+        onChangeRouteMode={(value) => {
+          if (!activeSegmentId) return
+          updateSegment(activeSegmentId, (segment) => ({ ...segment, routeType: value }))
+        }}
+        onChangeRoutePreference={(value) => {
           if (!activeSegmentId) return
           updateSegment(activeSegmentId, (segment) => ({ ...segment, preference: value }))
         }}
@@ -648,6 +671,7 @@ function App() {
         onSaveEdit={saveSegmentTrack}
         selectedWaypoint={selectedWaypoint}
         onTracksComputed={setSegmentTrackPoints}
+        onDistanceComputed={saveSegmentDistance}
         endpointDraft={effectiveEndpointDraft}
         onEndpointDraftChange={(payload) => {
           setEndpointDraft((prev) => {

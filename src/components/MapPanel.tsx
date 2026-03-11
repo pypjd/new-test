@@ -5,7 +5,7 @@ import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 import type { CoordPoint, RouteSegment, Waypoint } from '../types/trip'
-import { planDrivingRoute, searchAmapInputTips } from '../services/amap'
+import { planCyclingRoute, planDrivingRoute, searchAmapInputTips } from '../services/amap'
 
 interface EndpointDraft {
   segmentId: string
@@ -28,6 +28,7 @@ interface MapPanelProps {
   }) => void
   selectedWaypoint: Waypoint | null
   onTracksComputed: (tracks: Record<string, CoordPoint[]>) => void
+  onDistanceComputed: (segmentId: string, distanceMeters: number | null) => void
   endpointDraft: EndpointDraft | null
   onEndpointDraftChange: (payload: {
     segmentId: string
@@ -171,6 +172,7 @@ function MapPanel({
   onSaveEdit,
   selectedWaypoint,
   onTracksComputed,
+  onDistanceComputed,
   endpointDraft,
   onEndpointDraftChange,
 }: MapPanelProps) {
@@ -245,15 +247,21 @@ function MapPanel({
             return
           }
 
-          const drivingPoints = markerPoints.map((point) => ({ lat: point.lat, lng: point.lon }))
-          const { route, error } = await planDrivingRoute(drivingPoints, segment.preference)
+          const planningPoints = markerPoints.map((point) => ({ lat: point.lat, lng: point.lon }))
+          const routeType = segment.routeType ?? 'DRIVING'
+          const { route, error } =
+            routeType === 'CYCLING'
+              ? await planCyclingRoute(planningPoints)
+              : await planDrivingRoute(planningPoints, segment.preference)
 
           let line = fallbackLineFromPoints(markerPoints)
           if (route?.polyline?.length) {
             line = route.polyline.map(([lat, lng]) => ({ lat, lon: lng }))
+            onDistanceComputed(segment.id, typeof route.distanceMeters === 'number' ? route.distanceMeters : null)
           } else {
             const reason = error?.message ?? '未知错误'
             warnings.push(`路段「${segment.name}」规划失败：${reason}，已降级为直线连接。`)
+            onDistanceComputed(segment.id, null)
           }
 
           if (!active || runId !== buildRunIdRef.current) return
@@ -291,7 +299,7 @@ function MapPanel({
     return () => {
       active = false
     }
-  }, [segmentsToShow, onTracksComputed, endpointDraft])
+  }, [segmentsToShow, onTracksComputed, onDistanceComputed, endpointDraft])
 
   const editingTrack = useMemo(
     () => (editingSegmentId ? tracks.find((track) => track.segmentId === editingSegmentId) ?? null : null),

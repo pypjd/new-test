@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Trip } from '../types/trip'
+import { formatDistance, getTripDistanceMeters } from '../utils/distance'
 
 interface TripManageModalProps {
   open: boolean
@@ -77,7 +78,8 @@ function TripManageModal({
                     <>
                       <strong>{trip.title}</strong>
                       <small>
-                        {trip.startDate} ~ {trip.endDate} · {segmentCount} 条路段
+                        {trip.startDate} ~ {trip.endDate} · {segmentCount} 条路段 · 旅程总里程：
+                        {formatDistance(getTripDistanceMeters(trip))}
                       </small>
                     </>
                   )}
