@@ -1,37 +1,108 @@
 import { mockTripReview } from './mockData'
-import type { RouteSegment, TripReview } from '../types/trip'
+import type { CoordPoint, RouteSegment, TripReview, Waypoint } from '../types/trip'
 
 // 本地存储服务：统一处理 TripReview 的读取与保存，避免组件直接操作 localStorage。
 const STORAGE_KEY = 'trip-review-data-v1'
 
+function normalizeCoordPoint(value: unknown): CoordPoint | undefined {
+  if (!value || typeof value !== 'object') return undefined
+
+  const candidate = value as Partial<CoordPoint>
+  if (typeof candidate.lat !== 'number' || typeof candidate.lon !== 'number') return undefined
+
+  const point: CoordPoint = {
+    lat: candidate.lat,
+    lon: candidate.lon,
+  }
+
+  if (typeof candidate.timestamp === 'string') {
+    point.timestamp = candidate.timestamp
+  }
+
+  return point
+}
+
+function normalizeCoordPointArray(value: unknown): CoordPoint[] | undefined {
+  if (!Array.isArray(value)) return undefined
+
+  const points = value
+    .map((item) => normalizeCoordPoint(item))
+    .filter((item): item is CoordPoint => Boolean(item))
+
+  return points.length > 0 ? points : undefined
+}
+
+function normalizeWaypoint(value: unknown): Waypoint | undefined {
+  if (!value || typeof value !== 'object') return undefined
+
+  const candidate = value as Partial<Waypoint>
+  if (typeof candidate.id !== 'string' || typeof candidate.name !== 'string') return undefined
+
+  const waypoint: Waypoint = {
+    id: candidate.id,
+    name: candidate.name,
+  }
+
+  if (typeof candidate.lat === 'number') waypoint.lat = candidate.lat
+  if (typeof candidate.lng === 'number') waypoint.lng = candidate.lng
+  if (typeof candidate.amapId === 'string') waypoint.amapId = candidate.amapId
+  if (typeof candidate.timestamp === 'string') waypoint.timestamp = candidate.timestamp
+
+  return waypoint
+}
+
+function normalizeWaypoints(value: unknown): Waypoint[] | undefined {
+  if (!Array.isArray(value)) return undefined
+
+  const waypoints = value
+    .map((item) => normalizeWaypoint(item))
+    .filter((item): item is Waypoint => Boolean(item))
+
+  return waypoints.length > 0 ? waypoints : undefined
+}
+
+function normalizeRouteSegment(segment: RouteSegment): RouteSegment {
+  const normalizedStartCoord = normalizeCoordPoint(segment.startCoord)
+  const normalizedEndCoord = normalizeCoordPoint(segment.endCoord)
+
+  return {
+    ...segment,
+    routeType: segment.routeType ?? 'DRIVING',
+    preference: segment.preference === 'AVOID_TOLL' ? 'AVOID_TOLL' : 'HIGHWAY_FIRST',
+    startCoord: normalizedStartCoord,
+    endCoord: normalizedEndCoord,
+    points: normalizeCoordPointArray(segment.points),
+    waypoints: normalizeWaypoints(segment.waypoints),
+  }
+}
+
 function normalizeTripReview(input: TripReview): TripReview {
   return {
     ...input,
-    trips: input.trips.map((trip) => ({
+    trips: (input.trips ?? []).map((trip) => ({
       ...trip,
       category: trip.category === 'plan' ? 'plan' : 'review',
-      days: trip.days.map((day) => ({
+      days: (trip.days ?? []).map((day) => ({
         ...day,
-        routeSegments: day.routeSegments.map((segment) => ({
-          ...segment,
-          routeType: segment.routeType ?? 'DRIVING',
-          preference: segment.preference === 'AVOID_TOLL' ? 'AVOID_TOLL' : 'HIGHWAY_FIRST',
-        })),
+        routeSegments: (day.routeSegments ?? []).map((segment) => normalizeRouteSegment(segment)),
       })),
     })),
   }
 }
 
 function toPersistedRouteSegment(segment: RouteSegment): RouteSegment {
+  const normalizedPoints = normalizeCoordPointArray(segment.points)
+
   return {
     id: segment.id,
     name: segment.name,
     date: segment.date,
     startPoint: segment.startPoint,
     endPoint: segment.endPoint,
-    startCoord: segment.startCoord,
-    endCoord: segment.endCoord,
-    waypoints: segment.waypoints,
+    startCoord: normalizeCoordPoint(segment.startCoord),
+    endCoord: normalizeCoordPoint(segment.endCoord),
+    points: normalizedPoints,
+    waypoints: normalizeWaypoints(segment.waypoints),
     routeType: segment.routeType ?? 'DRIVING',
     preference: segment.preference === 'AVOID_TOLL' ? 'AVOID_TOLL' : 'HIGHWAY_FIRST',
     distanceMeters: segment.distanceMeters,
