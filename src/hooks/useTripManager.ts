@@ -240,7 +240,7 @@ export function useTripManager({
     name: string
     startPoint: string
     endPoint: string
-    viaPointsText: string
+    waypoints: Waypoint[]
     preference: RoutePreference
     routeType: RouteType
     startCoord?: CoordPoint
@@ -259,7 +259,7 @@ export function useTripManager({
           date: payload.dayDate,
           startPoint: payload.startPoint,
           endPoint: payload.endPoint,
-          viaPointsText: payload.viaPointsText,
+          waypoints: payload.waypoints.length ? payload.waypoints : undefined,
           preference: payload.preference,
           routeType: payload.routeType,
           startCoord: payload.startCoord,
