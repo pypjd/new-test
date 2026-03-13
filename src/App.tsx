@@ -895,7 +895,7 @@ function App() {
         onSaveEdit={saveSegmentTrack}
         selectedWaypoint={selectedWaypoint}
         onRouteResolved={saveResolvedRoutes}
-        allowAutoBuild={Boolean(filters.tripId)}
+        allowAutoBuild={Boolean(filters.tripId && filters.dayId && filters.segmentId && mapRenderSegments.length <= 3)}
         onEndpointDraftChange={(payload) => {
           setEndpointDraft((prev) => {
             if (!prev || prev.segmentId !== payload.segmentId) return prev
