@@ -330,6 +330,7 @@ function App() {
           <div className="map-canvas-wrap">
             <MapPanel
               filteredSegments={mapRenderSegments}
+              mapInfo={mapInfo}
               editingSegmentId={editingSegmentId}
               onCancelEdit={() => setEditingSegmentId(null)}
               onSaveEdit={(payload) => {
