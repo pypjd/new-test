@@ -148,34 +148,6 @@ function App() {
     setSegmentMetaDraft(null)
   }, [activeWorkspace, workspaceTrips, isReadonlyDemoMode])
 
-  if (isReadonlyDemoMode && isLoading) {
-    return (
-      <main className="app-shell">
-        <header className="top-nav">
-          <div className="top-nav-title-group">
-            <h1>自驾旅行记录与规划工具</h1>
-            <p>只读展示版正在加载全部旅程数据...</p>
-            <p className="readonly-banner">演示版 / 只读模式：当前内容不可修改</p>
-          </div>
-        </header>
-      </main>
-    )
-  }
-
-  if (isReadonlyDemoMode && loadError) {
-    return (
-      <main className="app-shell">
-        <header className="top-nav">
-          <div className="top-nav-title-group">
-            <h1>自驾旅行记录与规划工具</h1>
-            <p>只读展示版加载失败：{loadError}</p>
-            <p className="readonly-banner">请检查 public/demo-data.json 是否存在且 JSON 结构合法。</p>
-          </div>
-        </header>
-      </main>
-    )
-  }
-
   const selectedTrip = useMemo(
     () => workspaceTrips.find((trip) => trip.id === filters.tripId) ?? null,
     [workspaceTrips, filters.tripId],
@@ -232,20 +204,36 @@ function App() {
     const dateLabel = selectedDay?.date ?? (isAllTripsSelected ? '全部日期' : filterContext.dayDate)
     const cacheStatus = filters.tripId && filters.dayId && filters.segmentId && mapRenderSegments.length <= 3 ? '按需规划' : '缓存优先'
 
+    const mapDistanceText = (() => {
+      if (activeSegment) {
+        return formatDistance(getTrackDistanceMeters(activeSegment))
+      }
+
+      if (selectedDay) {
+        return formatDistance(getDayDistanceMeters(selectedDay.routeSegments))
+      }
+
+      if (selectedTrip) {
+        return formatDistance(getTripDistanceMeters(selectedTrip))
+      }
+
+      return formatDistance(getDayDistanceMeters(mapRenderSegments))
+    })()
+
     if (activeSegment) {
       return {
-        summary: `${activeSegment.name} · ${segmentEditing.activeSegmentDate || dateLabel} · 路段数 ${mapRenderSegments.length} · 缓存状态 ${cacheStatus}`,
+        summary: `${activeSegment.name} · ${segmentEditing.activeSegmentDate || dateLabel} · 路段数 ${mapRenderSegments.length} · 距离 ${mapDistanceText} · 缓存状态 ${cacheStatus}`,
       }
     }
 
     if (isAllTripsSelected) {
       return {
-        summary: `全部路线 · ${dateLabel} · 路段数 ${mapRenderSegments.length} · 缓存状态 ${cacheStatus}`,
+        summary: `全部路线 · ${dateLabel} · 路段数 ${mapRenderSegments.length} · 距离 ${mapDistanceText} · 缓存状态 ${cacheStatus}`,
       }
     }
 
     return {
-      summary: `${selectedTrip?.title ?? '当前路线'} · ${dateLabel} · 路段数 ${mapRenderSegments.length} · 缓存状态 ${cacheStatus}`,
+      summary: `${selectedTrip?.title ?? '当前路线'} · ${dateLabel} · 路段数 ${mapRenderSegments.length} · 距离 ${mapDistanceText} · 缓存状态 ${cacheStatus}`,
     }
   }, [
     activeSegment,
@@ -256,8 +244,11 @@ function App() {
     filters.dayId,
     filters.segmentId,
     mapRenderSegments.length,
+    mapRenderSegments,
     filterContext.dayDate,
+    selectedDay,
     selectedTrip?.title,
+    selectedTrip,
   ])
 
   const saveResolvedRoutes = useCallback(
@@ -315,6 +306,34 @@ function App() {
 
   const routePreferenceValue = activeSegment?.preference ?? 'HIGHWAY_FIRST'
   const routeModeValue = activeSegment?.routeType ?? 'DRIVING'
+
+  if (isReadonlyDemoMode && isLoading) {
+    return (
+      <main className="app-shell">
+        <header className="top-nav">
+          <div className="top-nav-title-group">
+            <h1>自驾旅行记录与规划工具</h1>
+            <p>只读展示版正在加载全部旅程数据...</p>
+            <p className="readonly-banner">演示版 / 只读模式：当前内容不可修改</p>
+          </div>
+        </header>
+      </main>
+    )
+  }
+
+  if (isReadonlyDemoMode && loadError) {
+    return (
+      <main className="app-shell">
+        <header className="top-nav">
+          <div className="top-nav-title-group">
+            <h1>自驾旅行记录与规划工具</h1>
+            <p>只读展示版加载失败：{loadError}</p>
+            <p className="readonly-banner">请检查 public/demo-data.json 是否存在且 JSON 结构合法。</p>
+          </div>
+        </header>
+      </main>
+    )
+  }
 
   return (
     <main className="app-shell">
