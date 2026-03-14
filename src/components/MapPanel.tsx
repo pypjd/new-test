@@ -124,7 +124,11 @@ function ViewportController({ points }: ViewportControllerProps) {
   return null
 }
 
-function MapResizeController() {
+interface MapResizeControllerProps {
+  watchKey: string
+}
+
+function MapResizeController({ watchKey }: MapResizeControllerProps) {
   const map = useMap()
 
   useEffect(() => {
@@ -136,6 +140,19 @@ function MapResizeController() {
     const handleResize = () => map.invalidateSize()
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
+  }, [map])
+
+  useEffect(() => {
+    const rafId = window.requestAnimationFrame(() => map.invalidateSize())
+    return () => window.cancelAnimationFrame(rafId)
+  }, [map, watchKey])
+
+  useEffect(() => {
+    const container = map.getContainer()
+    if (!container || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => map.invalidateSize())
+    observer.observe(container)
+    return () => observer.disconnect()
   }, [map])
 
   return null
@@ -404,6 +421,7 @@ function MapPanel({
   }, [draftLine, editMode])
 
   const allLatLng = useMemo(() => displayedTracks.flatMap((track) => toLatLng(track.line)), [displayedTracks])
+  const mapResizeKey = `${displayedTracks.length}-${editingSegmentId ?? ''}-${loading ? 'loading' : 'idle'}`
 
   const handleCancel = () => {
     if (originalLine) setDraftLine(originalLine.map((point) => ({ ...point })))
@@ -462,7 +480,7 @@ function MapPanel({
           wheelPxPerZoomLevel={160}
           className="map-container"
         >
-          <MapResizeController />
+          <MapResizeController watchKey={mapResizeKey} />
           <TileLayer
             attribution='&copy; <a href="https://www.amap.com/">Amap</a>'
             url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
