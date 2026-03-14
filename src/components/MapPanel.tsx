@@ -18,6 +18,10 @@ interface ResolvedRoutePatch {
 
 interface MapPanelProps {
   filteredSegments: RouteSegment[]
+  mapInfo: {
+    title: string
+    meta: string
+  }
   editingSegmentId: string | null
   onCancelEdit: () => void
   onSaveEdit: (payload: {
@@ -165,6 +169,7 @@ async function resolvePointByName(placeName: string): Promise<{ lat: number; lon
 
 function MapPanel({
   filteredSegments,
+  mapInfo,
   editingSegmentId,
   onCancelEdit,
   onSaveEdit,
