@@ -18,10 +18,6 @@ interface ResolvedRoutePatch {
 
 interface MapPanelProps {
   filteredSegments: RouteSegment[]
-  mapInfo: {
-    title: string
-    meta: string
-  }
   editingSegmentId: string | null
   onCancelEdit: () => void
   onSaveEdit: (payload: {
@@ -33,6 +29,7 @@ interface MapPanelProps {
   selectedWaypoint: Waypoint | null
   onRouteResolved: (patches: ResolvedRoutePatch[]) => void
   allowAutoBuild: boolean
+  isReadonlyMode: boolean
   onEndpointDraftChange: (payload: {
     segmentId: string
     startCoord?: CoordPoint
@@ -186,13 +183,13 @@ async function resolvePointByName(placeName: string): Promise<{ lat: number; lon
 
 function MapPanel({
   filteredSegments,
-  mapInfo,
   editingSegmentId,
   onCancelEdit,
   onSaveEdit,
   selectedWaypoint,
   onRouteResolved,
   allowAutoBuild,
+  isReadonlyMode,
   onEndpointDraftChange,
 }: MapPanelProps) {
   const [tracks, setTracks] = useState<SegmentTrack[]>([])
@@ -231,7 +228,7 @@ function MapPanel({
         return
       }
 
-      const shouldPlanMissing = allowAutoBuild
+      const shouldPlanMissing = allowAutoBuild && !isReadonlyMode
       setLoading(shouldPlanMissing)
       setMessage(shouldPlanMissing ? '正在按需加载路线...' : '当前为全局视图，仅展示已缓存轨迹。')
 
@@ -361,7 +358,7 @@ function MapPanel({
     return () => {
       active = false
     }
-  }, [routeBuildKey, segmentDescriptors, allowAutoBuild, onRouteResolved])
+  }, [routeBuildKey, segmentDescriptors, allowAutoBuild, isReadonlyMode, onRouteResolved])
 
   const editingTrack = useMemo(
     () => (editingSegmentId ? tracks.find((track) => track.segmentId === editingSegmentId) ?? null : null),
@@ -449,7 +446,7 @@ function MapPanel({
       {loading && <p className="hint-text">正在加载轨迹点位...</p>}
       {!loading && message.startsWith('未解析') && <p className="hint-text">{message}</p>}
 
-      {editingSegmentId && (
+      {editingSegmentId && !isReadonlyMode && (
         <div className="map-toolbar">
           <button type="button" onClick={handleCancel}>
             取消

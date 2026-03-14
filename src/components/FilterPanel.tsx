@@ -6,12 +6,13 @@ interface FilterPanelProps {
   filters: FilterState
   onChange: (next: FilterState) => void
   onOpenTripManager: () => void
+  isReadonlyMode: boolean
   dayDistanceText: string
   tripDistanceText: string
 }
 
 // 筛选区：按“旅程 / 日期 / 路段”逐级筛选，并处理筛选联动重置。
-function FilterPanel({ trips, filters, onChange, onOpenTripManager, dayDistanceText, tripDistanceText }: FilterPanelProps) {
+function FilterPanel({ trips, filters, onChange, onOpenTripManager, isReadonlyMode, dayDistanceText, tripDistanceText }: FilterPanelProps) {
   const selectedTrip = trips.find((trip) => trip.id === filters.tripId)
 
   const dayOptions = useMemo(() => {
@@ -43,7 +44,7 @@ function FilterPanel({ trips, filters, onChange, onOpenTripManager, dayDistanceT
               ))}
             </select>
             <button type="button" onClick={onOpenTripManager}>
-              管理旅程
+              {isReadonlyMode ? '查看旅程' : '管理旅程'}
             </button>
           </div>
         </label>

@@ -6,6 +6,7 @@ import PlaceAutocomplete from './PlaceAutocomplete'
 
 interface TripEditorProps {
   trips: Trip[]
+  isReadonlyMode: boolean
   onAddTrip: (payload: { title: string; startDate: string; endDate: string }) => void
   onAddSegment: (payload: {
     tripId: string
@@ -28,7 +29,7 @@ function createId(prefix: string): string {
 }
 
 // 旅程编辑区：仅保留“新增旅程 / 为日期新增路段”，日期选项由旅程起止日期动态生成。
-function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
+function TripEditor({ trips, onAddTrip, onAddSegment, isReadonlyMode }: TripEditorProps) {
   const [tripTitle, setTripTitle] = useState('')
   const [tripStartDate, setTripStartDate] = useState('')
   const [tripEndDate, setTripEndDate] = useState('')
@@ -134,10 +135,10 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
 
       <form className="form-block" onSubmit={handleAddTrip}>
         <h3>新增旅程</h3>
-        <input value={tripTitle} onChange={(e) => setTripTitle(e.target.value)} placeholder="旅程标题" />
-        <input type="date" value={tripStartDate} onChange={(e) => setTripStartDate(e.target.value)} />
-        <input type="date" value={tripEndDate} onChange={(e) => setTripEndDate(e.target.value)} />
-        <button type="submit">添加旅程</button>
+        <input value={tripTitle} onChange={(e) => setTripTitle(e.target.value)} placeholder="旅程标题" disabled={isReadonlyMode} />
+        <input type="date" value={tripStartDate} onChange={(e) => setTripStartDate(e.target.value)} disabled={isReadonlyMode} />
+        <input type="date" value={tripEndDate} onChange={(e) => setTripEndDate(e.target.value)} disabled={isReadonlyMode} />
+        <button type="submit" disabled={isReadonlyMode}>添加旅程</button>
         {tripError && <p className="error-text">{tripError}</p>}
       </form>
 
@@ -150,6 +151,7 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
             setSegmentTripId(nextTripId)
             setSegmentDayDate('')
           }}
+          disabled={isReadonlyMode}
         >
           <option value="">请选择旅程</option>
           {trips.map((trip) => (
@@ -159,7 +161,7 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
           ))}
         </select>
 
-        <select value={segmentDayDate} onChange={(e) => setSegmentDayDate(e.target.value)} disabled={!segmentTripId}>
+        <select value={segmentDayDate} onChange={(e) => setSegmentDayDate(e.target.value)} disabled={isReadonlyMode || !segmentTripId}>
           <option value="">请选择日期</option>
           {dateOptions.map((date) => (
             <option key={date} value={date}>
@@ -168,7 +170,7 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
           ))}
         </select>
 
-        <input value={segmentName} onChange={(e) => setSegmentName(e.target.value)} placeholder="路段名称" />
+        <input value={segmentName} onChange={(e) => setSegmentName(e.target.value)} placeholder="路段名称" disabled={isReadonlyMode} />
 
         <PlaceAutocomplete
           valueText={segmentStartPoint}
@@ -183,7 +185,7 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
             setSegmentStartPlaceId(result.amapId)
           }}
           placeholder="起点（输入后从候选中选择）"
-          disabled={!segmentTripId}
+          disabled={isReadonlyMode || !segmentTripId}
         />
 
         <PlaceAutocomplete
@@ -199,14 +201,14 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
             setSegmentEndPlaceId(result.amapId)
           }}
           placeholder="终点（输入后从候选中选择）"
-          disabled={!segmentTripId}
+          disabled={isReadonlyMode || !segmentTripId}
         />
 
         <div className="waypoint-section">
           <p>途经点（Waypoints）</p>
           <p>途经点数量：{segmentWaypoints.length}</p>
           <div className="waypoint-actions">
-            <button type="button" onClick={() => setSegmentWaypoints((prev) => [...prev, { id: createId('wp'), name: '' }])}>
+            <button type="button" disabled={isReadonlyMode} onClick={() => setSegmentWaypoints((prev) => [...prev, { id: createId('wp'), name: '' }])}>
               + 添加途经点
             </button>
           </div>
@@ -235,11 +237,12 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
                     )
                   }}
                   placeholder="输入地名并选择候选"
-                  disabled={!segmentTripId}
+                  disabled={isReadonlyMode || !segmentTripId}
                 />
                 <div className="waypoint-buttons">
                   <button
                     type="button"
+                    disabled={isReadonlyMode}
                     onClick={() => {
                       setSegmentWaypoints((prev) => {
                         const idx = prev.findIndex((item) => item.id === waypoint.id)
@@ -255,6 +258,7 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
                   </button>
                   <button
                     type="button"
+                    disabled={isReadonlyMode}
                     onClick={() => {
                       setSegmentWaypoints((prev) => {
                         const idx = prev.findIndex((item) => item.id === waypoint.id)
@@ -268,7 +272,7 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
                   >
                     下移
                   </button>
-                  <button type="button" onClick={() => setSegmentWaypoints((prev) => prev.filter((item) => item.id !== waypoint.id))}>
+                  <button type="button" disabled={isReadonlyMode} onClick={() => setSegmentWaypoints((prev) => prev.filter((item) => item.id !== waypoint.id))}>
                     删除
                   </button>
                 </div>
@@ -277,7 +281,7 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
           </ul>
         </div>
 
-        <select value={segmentRouteType} onChange={(e) => setSegmentRouteType(e.target.value as RouteType)}>
+        <select value={segmentRouteType} onChange={(e) => setSegmentRouteType(e.target.value as RouteType)} disabled={isReadonlyMode}>
           <option value="DRIVING">驾车路线</option>
           <option value="CYCLING">骑行路线（走小路）</option>
         </select>
@@ -285,7 +289,7 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
         <select
           value={segmentPreference}
           onChange={(e) => setSegmentPreference(e.target.value as RoutePreference)}
-          disabled={segmentRouteType === 'CYCLING'}
+          disabled={isReadonlyMode || segmentRouteType === 'CYCLING'}
         >
           {routePreferenceOptions.map((option) => (
             <option key={option.value} value={option.value}>
@@ -294,9 +298,10 @@ function TripEditor({ trips, onAddTrip, onAddSegment }: TripEditorProps) {
           ))}
         </select>
 
-        <button type="submit" disabled={!segmentTripId || !segmentDayDate || !segmentName.trim()}>
+        <button type="submit" disabled={isReadonlyMode || !segmentTripId || !segmentDayDate || !segmentName.trim()}>
           添加路段
         </button>
+        {isReadonlyMode && <p className="hint-text">演示版只读模式下不可新增旅程或路段。</p>}
         {!segmentTripId && <p className="hint-text">请先选择旅程</p>}
         {(segmentStartPoint && !segmentStartCoord) || (segmentEndPoint && !segmentEndCoord) ? (
           <p className="hint-text">建议从候选中选择起终点，以提高定位精度。</p>

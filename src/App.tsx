@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { appMode, isReadonlyDemoMode } from './config/appMode'
 import FilterPanel from './components/FilterPanel'
 import MapPanel from './components/MapPanel'
 import MapPlaceholder from './components/MapPlaceholder'
@@ -27,7 +28,7 @@ function App() {
   const [endpointDraft, setEndpointDraft] = useState<EndpointDraft | null>(null)
   const [segmentMetaDraft, setSegmentMetaDraft] = useState<SegmentMetaDraft | null>(null)
 
-  useRouteCacheHydration({ trips: tripReview.trips, setTripReview })
+  useRouteCacheHydration({ trips: tripReview.trips, setTripReview, enabled: !isReadonlyDemoMode })
 
   const workspaceTrips = useMemo(
     () =>
@@ -76,6 +77,7 @@ function App() {
   }, [editingSegmentId, filters.segmentId, listViewSegments])
 
   const tripManager = useTripManager({
+    isReadonlyMode: isReadonlyDemoMode,
     activeWorkspace,
     filters,
     setFilters,
@@ -228,6 +230,7 @@ function App() {
 
   const saveResolvedRoutes = useCallback(
     (patches: Array<{ segmentId: string; points: CoordPoint[]; distanceMeters: number | null; routeBuildKey: string }>) => {
+      if (isReadonlyDemoMode) return
       if (!patches.length) return
       const patchMap = new Map(patches.map((item) => [item.segmentId, item]))
 
@@ -275,7 +278,7 @@ function App() {
         return changed ? { ...prev, trips: nextTrips } : prev
       })
     },
-    [setTripReview],
+    [isReadonlyDemoMode, setTripReview],
   )
 
   const routePreferenceValue = activeSegment?.preference ?? 'HIGHWAY_FIRST'
@@ -287,6 +290,7 @@ function App() {
         <div className="top-nav-title-group">
           <h1>自驾旅行记录与规划工具</h1>
           <p>{filterContext.tripName} · {filterContext.dayDate} · {filterContext.segmentName}</p>
+          {isReadonlyDemoMode && <p className="readonly-banner">演示版 / 只读模式：当前内容不可修改</p>}
         </div>
         <div className="workspace-tabs" role="tablist" aria-label="总分类">
           <button
@@ -309,7 +313,12 @@ function App() {
       <div className="workspace-layout">
         <aside className="sidebar-column">
           {!tripManagerOpen ? (
-            <TripEditor trips={workspaceTrips} onAddTrip={tripManager.addTrip} onAddSegment={tripManager.addSegment} />
+            <TripEditor
+              trips={workspaceTrips}
+              onAddTrip={tripManager.addTrip}
+              onAddSegment={tripManager.addSegment}
+              isReadonlyMode={isReadonlyDemoMode}
+            />
           ) : (
             <TripManageModal
               trips={workspaceTrips}
@@ -318,6 +327,7 @@ function App() {
               onMoveTrip={tripManager.moveTrip}
               onReorderTrips={tripManager.reorderTrips}
               onUpdateTrip={tripManager.updateTrip}
+              isReadonlyMode={isReadonlyDemoMode}
             />
           )}
         </aside>
@@ -330,7 +340,6 @@ function App() {
           <div className="map-canvas-wrap">
             <MapPanel
               filteredSegments={mapRenderSegments}
-              mapInfo={mapInfo}
               editingSegmentId={editingSegmentId}
               onCancelEdit={() => setEditingSegmentId(null)}
               onSaveEdit={(payload) => {
@@ -339,7 +348,8 @@ function App() {
               }}
               selectedWaypoint={segmentEditing.selectedWaypoint}
               onRouteResolved={saveResolvedRoutes}
-              allowAutoBuild={Boolean(filters.tripId && filters.dayId && filters.segmentId && mapRenderSegments.length <= 3)}
+              allowAutoBuild={Boolean(!isReadonlyDemoMode && filters.tripId && filters.dayId && filters.segmentId && mapRenderSegments.length <= 3)}
+              isReadonlyMode={isReadonlyDemoMode}
               onEndpointDraftChange={(payload) => {
                 setEndpointDraft((prev) => {
                   if (!prev || prev.segmentId !== payload.segmentId) return prev
@@ -358,6 +368,7 @@ function App() {
             filters={filters}
             onChange={setFilters}
             onOpenTripManager={() => setTripManagerOpen(true)}
+            isReadonlyMode={isReadonlyDemoMode}
             tripDistanceText={tripDistanceText}
             dayDistanceText={dayDistanceText}
           />
@@ -370,6 +381,7 @@ function App() {
             onViewTrip={(tripId) => setFilters({ tripId, dayId: '', segmentId: '' })}
             onOpenTripManager={() => setTripManagerOpen(true)}
             onDeleteTrip={tripManager.deleteTrip}
+            isReadonlyMode={isReadonlyDemoMode}
             filteredSegments={detailSegments}
             summary={summary}
             filterContext={filterContext}
@@ -477,6 +489,8 @@ function App() {
           />
         </aside>
       </div>
+
+      <footer className="app-mode-footer">当前模式：{appMode === 'readonly-demo' ? 'readonly-demo（演示只读）' : 'normal（正常可编辑）'}</footer>
 
     </main>
   )

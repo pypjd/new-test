@@ -45,6 +45,35 @@ npm run dev
 
 浏览器访问：<http://localhost:5173>
 
+### 2.1 只读展示版（readonly demo）启动
+
+在公网部署演示版时，推荐使用：
+
+```bash
+VITE_APP_MODE=readonly-demo npm run dev:frontend
+```
+
+或构建静态产物时指定：
+
+```bash
+VITE_APP_MODE=readonly-demo npm run build
+```
+
+只读展示版特点：
+- 数据来自仓库内置演示数据（`src/demo/demoData.ts`），不依赖访问者浏览器本地存储。
+- 新增/编辑/删除/排序/保存等写操作在 UI 与逻辑层双重禁用。
+- 地图优先展示演示数据中已保存轨迹，不主动触发按需规划，减少高德 API 消耗。
+
+### 2.2 从当前数据导出演示 JSON（开发辅助）
+
+仓库提供了导出辅助函数：
+
+```ts
+import { exportTripReviewAsDemoJson } from './src/demo/exportDemoData'
+```
+
+可在开发环境控制台中调用，把当前 `TripReview` 转成可直接落盘的 JSON 字符串，再整理进演示数据文件。
+
 ---
 
 ## 3. 使用说明
