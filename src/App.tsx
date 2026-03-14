@@ -15,7 +15,7 @@ import { formatDistance, getDayDistanceMeters, getTrackDistanceMeters, getTripDi
 import './styles/app.css'
 
 function App() {
-  const { tripReview, setTripReview } = useTripReviewState()
+  const { tripReview, setTripReview, isLoading, loadError } = useTripReviewState()
   const [activeWorkspace, setActiveWorkspace] = useState<TripCategory>('review')
   const [filters, setFilters] = useState<FilterState>({ tripId: '', dayId: '', segmentId: '' })
   const [tripManagerOpen, setTripManagerOpen] = useState(false)
@@ -123,6 +123,10 @@ function App() {
       const firstTrip = workspaceTrips[0]
       if (!firstTrip) return { tripId: '', dayId: '', segmentId: '' }
 
+      if (isReadonlyDemoMode && !prev.tripId) {
+        return { tripId: '', dayId: '', segmentId: '' }
+      }
+
       const selectedTrip = workspaceTrips.find((trip) => trip.id === prev.tripId) ?? firstTrip
       const selectedDay = selectedTrip.days.find((day) => day.id === prev.dayId) ?? selectedTrip.days[0]
       const selectedSegment =
@@ -142,7 +146,35 @@ function App() {
     setEditingEndpointsSegmentId(null)
     setEndpointDraft(null)
     setSegmentMetaDraft(null)
-  }, [activeWorkspace, workspaceTrips])
+  }, [activeWorkspace, workspaceTrips, isReadonlyDemoMode])
+
+  if (isReadonlyDemoMode && isLoading) {
+    return (
+      <main className="app-shell">
+        <header className="top-nav">
+          <div className="top-nav-title-group">
+            <h1>自驾旅行记录与规划工具</h1>
+            <p>只读展示版正在加载全部旅程数据...</p>
+            <p className="readonly-banner">演示版 / 只读模式：当前内容不可修改</p>
+          </div>
+        </header>
+      </main>
+    )
+  }
+
+  if (isReadonlyDemoMode && loadError) {
+    return (
+      <main className="app-shell">
+        <header className="top-nav">
+          <div className="top-nav-title-group">
+            <h1>自驾旅行记录与规划工具</h1>
+            <p>只读展示版加载失败：{loadError}</p>
+            <p className="readonly-banner">请检查 public/demo-data.json 是否存在且 JSON 结构合法。</p>
+          </div>
+        </header>
+      </main>
+    )
+  }
 
   const selectedTrip = useMemo(
     () => workspaceTrips.find((trip) => trip.id === filters.tripId) ?? null,
@@ -340,6 +372,7 @@ function App() {
           <div className="map-canvas-wrap">
             <MapPanel
               filteredSegments={mapRenderSegments}
+              isOverviewMode={!filters.tripId}
               editingSegmentId={editingSegmentId}
               onCancelEdit={() => setEditingSegmentId(null)}
               onSaveEdit={(payload) => {
