@@ -2,6 +2,7 @@ import type { RoutePreference } from '../types/trip'
 
 const ROUTE_QUEUE_CONCURRENCY = 2
 const ROUTE_REQUEST_DELAY_MS = 200
+const ROUTE_RATE_LIMIT_COOLDOWN_MS = 3000
 const INPUT_TIPS_CACHE_MAX = 200
 const INPUT_TIPS_CACHE_TTL_MS = 10 * 60 * 1000
 
@@ -49,6 +50,7 @@ export interface DrivingRouteResult {
   polyline: Array<[number, number]>
   distanceText: string
   durationText: string
+  distanceMeters?: number
   routeKey: string
   fromCache?: boolean
 }
@@ -72,7 +74,9 @@ type CachedTipsEntry = {
 const routeCache = new Map<string, DrivingRouteResult>()
 const inputTipsCache = new Map<string, CachedTipsEntry>()
 const routeTaskQueue: RouteTask[] = []
+const inflightRouteTasks = new Map<string, Promise<{ route: DrivingRouteResult | null; error: AMapServiceError | null }>>()
 let activeRouteTasks = 0
+let routeQueuePauseUntil = 0
 
 function toLonLatText(point: DrivingRequestPoint): string {
   return `${point.lng},${point.lat}`
@@ -88,9 +92,7 @@ function parseLocationText(location: string): { lat: number; lng: number } | nul
 
 function preferenceToStrategy(preference: RoutePreference): string {
   if (preference === 'HIGHWAY_FIRST') return '0'
-  if (preference === 'LESS_TOLL') return '4'
   if (preference === 'AVOID_TOLL') return '1'
-  if (preference === 'NORMAL_ROAD_FIRST') return '2'
   return '0'
 }
 
@@ -98,7 +100,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
+function isRouteRateLimitError(error: unknown): boolean {
+  const message = String((error as { message?: unknown })?.message ?? error ?? '').toUpperCase()
+  return message.includes('CUPQS_HAS_EXCEEDED_THE_LIMIT') || message.includes('10021') || message.includes('RATE_LIMIT')
+}
+
+function pauseRouteQueueForRateLimit() {
+  const nextPauseUntil = Date.now() + ROUTE_RATE_LIMIT_COOLDOWN_MS
+  routeQueuePauseUntil = Math.max(routeQueuePauseUntil, nextPauseUntil)
+}
+
 function processRouteQueue() {
+  const now = Date.now()
+  if (routeQueuePauseUntil > now) {
+    window.setTimeout(processRouteQueue, routeQueuePauseUntil - now)
+    return
+  }
+
   while (activeRouteTasks < ROUTE_QUEUE_CONCURRENCY && routeTaskQueue.length) {
     const nextTask = routeTaskQueue.shift()
     if (!nextTask) return
@@ -331,7 +349,7 @@ export async function requestDrivingRoute(
   destLngLat: string,
   strategy = '0',
   waypoints?: string,
-): Promise<{ polyline: Array<[number, number]>; distanceText: string; durationText: string }> {
+): Promise<{ polyline: Array<[number, number]>; distanceText: string; durationText: string; distanceMeters?: number }> {
   const url = new URL('/api/amap/direction', window.location.origin)
   url.searchParams.set('origin', originLngLat)
   url.searchParams.set('destination', destLngLat)
@@ -399,6 +417,70 @@ export async function requestDrivingRoute(
     polyline: pointsList,
     distanceText: path.distance ? `${path.distance} 米` : '未知',
     durationText: path.duration ? `${path.duration} 秒` : '未知',
+    distanceMeters: path.distance ? Number(path.distance) : undefined,
+  }
+}
+
+export async function requestCyclingRoute(
+  originLngLat: string,
+  destLngLat: string,
+): Promise<{ polyline: Array<[number, number]>; distanceText: string; durationText: string; distanceMeters?: number }> {
+  const url = new URL('/api/amap/cycling-direction', window.location.origin)
+  url.searchParams.set('origin', originLngLat)
+  url.searchParams.set('destination', destLngLat)
+
+  const response = await fetch(`${url.pathname}${url.search}`)
+  const raw = (await response.json()) as {
+    ok?: boolean
+    message?: string
+    data?: {
+      errcode?: number
+      errmsg?: string
+      data?: {
+        paths?: Array<{
+          distance?: number
+          duration?: number
+          steps?: Array<{ polyline?: string }>
+        }>
+      }
+    }
+  }
+
+  if (!response.ok || !raw.ok) {
+    throw new Error(raw.message || 'cycling direction failed')
+  }
+
+  const payload = raw.data
+  if (!payload || payload.errcode !== 0) {
+    throw new Error(payload?.errmsg || 'cycling direction failed')
+  }
+
+  const path = payload.data?.paths?.[0]
+  if (!path) throw new Error('高德未返回可用骑行路线。')
+
+  const pointsList: Array<[number, number]> = []
+  const seen = new Set<string>()
+  for (const step of path.steps ?? []) {
+    if (!step.polyline) continue
+    for (const rawPair of step.polyline.split(';')) {
+      const parsed = parseLocationText(rawPair)
+      if (!parsed) continue
+      const key = `${parsed.lat.toFixed(6)},${parsed.lng.toFixed(6)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      pointsList.push([parsed.lat, parsed.lng])
+    }
+  }
+
+  if (!pointsList.length) {
+    throw new Error('高德返回骑行路线为空。')
+  }
+
+  return {
+    polyline: pointsList,
+    distanceText: typeof path.distance === 'number' ? `${path.distance} 米` : '未知',
+    durationText: typeof path.duration === 'number' ? `${path.duration} 秒` : '未知',
+    distanceMeters: typeof path.distance === 'number' ? path.distance : undefined,
   }
 }
 
@@ -421,6 +503,7 @@ async function planDrivingRouteRaw(
         polyline: result.polyline,
         distanceText: result.distanceText,
         durationText: result.durationText,
+        distanceMeters: result.distanceMeters,
         routeKey,
       },
       error: null,
@@ -431,6 +514,21 @@ async function planDrivingRouteRaw(
       error: { message: (error as Error).message || '高德驾车规划请求失败，请检查网络或稍后重试。' },
     }
   }
+}
+
+function withRouteInFlightDedup(
+  key: string,
+  createTask: () => Promise<{ route: DrivingRouteResult | null; error: AMapServiceError | null }>,
+): Promise<{ route: DrivingRouteResult | null; error: AMapServiceError | null }> {
+  const existing = inflightRouteTasks.get(key)
+  if (existing) return existing
+
+  const task = createTask().finally(() => {
+    inflightRouteTasks.delete(key)
+  })
+
+  inflightRouteTasks.set(key, task)
+  return task
 }
 
 export async function planDrivingRoute(
@@ -446,20 +544,74 @@ export async function planDrivingRoute(
     }
   }
 
-  const result = await enqueueRouteTask(async () => {
-    await sleep(ROUTE_REQUEST_DELAY_MS)
-    const { route, error } = await planDrivingRouteRaw(points, preference, routeKey)
-    if (!route || error) {
-      throw error ?? { message: '驾车规划失败' }
-    }
-    return route
-  })
-    .then((route) => ({ route, error: null as AMapServiceError | null }))
-    .catch((error: AMapServiceError) => ({ route: null, error }))
+  return withRouteInFlightDedup(`DRIVING::${routeKey}`, async () => {
+    const result = await enqueueRouteTask(async () => {
+      await sleep(ROUTE_REQUEST_DELAY_MS)
+      const { route, error } = await planDrivingRouteRaw(points, preference, routeKey)
+      if (!route || error) {
+        throw error ?? { message: '驾车规划失败' }
+      }
+      return route
+    })
+      .then((route) => ({ route, error: null as AMapServiceError | null }))
+      .catch((error: AMapServiceError) => {
+        if (isRouteRateLimitError(error)) {
+          pauseRouteQueueForRateLimit()
+        }
+        return { route: null, error }
+      })
 
-  if (result.route) {
-    routeCache.set(routeKey, result.route)
+    if (result.route) {
+      routeCache.set(routeKey, result.route)
+    }
+
+    return result
+  })
+}
+
+export async function planCyclingRoute(
+  points: DrivingRequestPoint[],
+): Promise<{ route: DrivingRouteResult | null; error: AMapServiceError | null }> {
+  if (points.length < 2) return { route: null, error: { code: 'POINTS_NOT_ENOUGH', message: '路径规划至少需要起点和终点。' } }
+
+  const routeKey = `${points.map(toLonLatText).join('|')}|CYCLING`
+  const cached = routeCache.get(routeKey)
+  if (cached) return { route: { ...cached, fromCache: true }, error: null }
+
+  const run = async () => {
+    await sleep(ROUTE_REQUEST_DELAY_MS)
+    const polyline: Array<[number, number]> = []
+    let distanceMeters = 0
+    let durationSeconds = 0
+
+    for (let idx = 0; idx < points.length - 1; idx += 1) {
+      const leg = await requestCyclingRoute(toLonLatText(points[idx]), toLonLatText(points[idx + 1]))
+      distanceMeters += Number(leg.distanceText.replace(/[^\d.]/g, '')) || 0
+      durationSeconds += Number(leg.durationText.replace(/[^\d.]/g, '')) || 0
+      polyline.push(...leg.polyline)
+    }
+
+    if (!polyline.length) throw new Error('骑行规划失败')
+
+    const route: DrivingRouteResult = {
+      polyline,
+      distanceText: `${Math.round(distanceMeters)} 米`,
+      durationText: `${Math.round(durationSeconds)} 秒`,
+      distanceMeters: Math.round(distanceMeters),
+      routeKey,
+    }
+    routeCache.set(routeKey, route)
+    return route
   }
 
-  return result
+  return withRouteInFlightDedup(`CYCLING::${routeKey}`, () =>
+    enqueueRouteTask(run)
+      .then((route) => ({ route, error: null as AMapServiceError | null }))
+      .catch((error: AMapServiceError) => {
+        if (isRouteRateLimitError(error)) {
+          pauseRouteQueueForRateLimit()
+        }
+        return { route: null, error: { message: error?.message || '高德骑行规划请求失败，请检查网络或稍后重试。' } }
+      }),
+  )
 }

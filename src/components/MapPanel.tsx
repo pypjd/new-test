@@ -5,20 +5,24 @@ import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 import type { CoordPoint, RouteSegment, Waypoint } from '../types/trip'
-import { planDrivingRoute, searchAmapInputTips } from '../services/amap'
+import { planCyclingRoute, planDrivingRoute, searchAmapInputTips } from '../services/amap'
+import { saveSegmentRouteCache } from '../services/routeCacheDb'
+import { buildSegmentRouteKey } from '../utils/routeBuildKey'
 
-interface EndpointDraft {
+interface ResolvedRoutePatch {
   segmentId: string
-  startPoint: string
-  endPoint: string
-  startCoord?: CoordPoint
-  endCoord?: CoordPoint
+  points: CoordPoint[]
+  distanceMeters: number | null
+  routeBuildKey: string
 }
 
 interface MapPanelProps {
   filteredSegments: RouteSegment[]
+  mapInfo: {
+    title: string
+    meta: string
+  }
   editingSegmentId: string | null
-  onStartEdit: (segmentId: string) => void
   onCancelEdit: () => void
   onSaveEdit: (payload: {
     segmentId: string
@@ -27,8 +31,8 @@ interface MapPanelProps {
     points: CoordPoint[]
   }) => void
   selectedWaypoint: Waypoint | null
-  onTracksComputed: (tracks: Record<string, CoordPoint[]>) => void
-  endpointDraft: EndpointDraft | null
+  onRouteResolved: (patches: ResolvedRoutePatch[]) => void
+  allowAutoBuild: boolean
   onEndpointDraftChange: (payload: {
     segmentId: string
     startCoord?: CoordPoint
@@ -46,17 +50,18 @@ interface SegmentTrack {
   line: CoordPoint[]
 }
 
+interface SegmentRouteDescriptor {
+  segment: RouteSegment
+  buildKey: string
+  canReusePersisted: boolean
+}
+
 interface ViewportControllerProps {
   points: LatLngExpression[]
 }
 
 interface WaypointFocusControllerProps {
   waypoint: Waypoint | null
-}
-
-
-interface MapResizeControllerProps {
-  expanded: boolean
 }
 
 const defaultCenter: [number, number] = [35.8617, 104.1954]
@@ -119,19 +124,35 @@ function ViewportController({ points }: ViewportControllerProps) {
   return null
 }
 
+interface MapResizeControllerProps {
+  watchKey: string
+}
 
-function MapResizeController({ expanded }: MapResizeControllerProps) {
+function MapResizeController({ watchKey }: MapResizeControllerProps) {
   const map = useMap()
 
   useEffect(() => {
     const timer = window.setTimeout(() => map.invalidateSize(), 80)
     return () => window.clearTimeout(timer)
-  }, [map, expanded])
+  }, [map])
 
   useEffect(() => {
     const handleResize = () => map.invalidateSize()
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
+  }, [map])
+
+  useEffect(() => {
+    const rafId = window.requestAnimationFrame(() => map.invalidateSize())
+    return () => window.cancelAnimationFrame(rafId)
+  }, [map, watchKey])
+
+  useEffect(() => {
+    const container = map.getContainer()
+    if (!container || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => map.invalidateSize())
+    observer.observe(container)
+    return () => observer.disconnect()
   }, [map])
 
   return null
@@ -165,68 +186,65 @@ async function resolvePointByName(placeName: string): Promise<{ lat: number; lon
 
 function MapPanel({
   filteredSegments,
+  mapInfo,
   editingSegmentId,
-  onStartEdit,
   onCancelEdit,
   onSaveEdit,
   selectedWaypoint,
-  onTracksComputed,
-  endpointDraft,
+  onRouteResolved,
+  allowAutoBuild,
   onEndpointDraftChange,
 }: MapPanelProps) {
   const [tracks, setTracks] = useState<SegmentTrack[]>([])
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('请选择旅程/日期/路段以查看轨迹')
-  const [mapExpanded, setMapExpanded] = useState(false)
   const [editMode, setEditMode] = useState<EditMode>('start')
   const [draftLine, setDraftLine] = useState<CoordPoint[] | null>(null)
   const [originalLine, setOriginalLine] = useState<CoordPoint[] | null>(null)
   const buildRunIdRef = useRef(0)
 
-  const segmentsToShow = useMemo(() => filteredSegments, [filteredSegments])
+  const segmentDescriptors = useMemo<SegmentRouteDescriptor[]>(
+    () =>
+      filteredSegments.map((segment) => {
+        const buildKey = buildSegmentRouteKey(segment)
+        const hasPersistentLine = Array.isArray(segment.points) && segment.points.length >= 2
+        return {
+          segment,
+          buildKey,
+          canReusePersisted: hasPersistentLine && segment.routeBuildKey === buildKey,
+        }
+      }),
+    [filteredSegments],
+  )
+
+  const routeBuildKey = useMemo(() => segmentDescriptors.map((item) => `${item.segment.id}:${item.buildKey}`).join('||'), [segmentDescriptors])
 
   useEffect(() => {
     let active = true
     const runId = ++buildRunIdRef.current
 
     async function buildTracks() {
-      if (!segmentsToShow.length) {
+      if (!segmentDescriptors.length) {
         setTracks([])
         setLoading(false)
         setMessage('请选择旅程/日期/路段以查看轨迹')
-        onTracksComputed({})
         return
       }
 
-      // 筛选范围变化时先清空旧线，避免异步请求期间旧轨迹残留。
-      setTracks([])
-      onTracksComputed({})
+      const shouldPlanMissing = allowAutoBuild
+      setLoading(shouldPlanMissing)
+      setMessage(shouldPlanMissing ? '正在按需加载路线...' : '当前为全局视图，仅展示已缓存轨迹。')
 
-      setLoading(true)
-      setMessage('正在通过高德加载路线...')
-
-      const pointsForParent: Record<string, CoordPoint[]> = {}
       const warnings: string[] = []
-      const partialTracks: Array<SegmentTrack | null> = new Array(segmentsToShow.length).fill(null)
+      const patches: ResolvedRoutePatch[] = []
+      const partialTracks: Array<SegmentTrack | null> = new Array(segmentDescriptors.length).fill(null)
 
-      const tasks = segmentsToShow.map((segment, index) =>
+      const tasks = segmentDescriptors.map(({ segment, buildKey, canReusePersisted }, index) =>
         (async () => {
-          const segmentEndpointDraft = endpointDraft?.segmentId === segment.id ? endpointDraft : null
-
-          const startName = segmentEndpointDraft?.startPoint ?? segment.startPoint
-          const endName = segmentEndpointDraft?.endPoint ?? segment.endPoint
-
-          let startCoord = segmentEndpointDraft?.startCoord ?? segment.startCoord
-          let endCoord = segmentEndpointDraft?.endCoord ?? segment.endCoord
-
-          if (!startCoord && startName) {
-            const resolved = await resolvePointByName(startName)
-            if (resolved) startCoord = resolved
-          }
-          if (!endCoord && endName) {
-            const resolved = await resolvePointByName(endName)
-            if (resolved) endCoord = resolved
-          }
+          const startName = segment.startPoint
+          const endName = segment.endPoint
+          let startCoord = segment.startCoord
+          let endCoord = segment.endCoord
 
           const resolvedWaypoints = (segment.waypoints ?? []).filter(
             (point): point is Waypoint & { lat: number; lng: number } =>
@@ -240,50 +258,102 @@ function MapPanel({
           }
           if (endCoord) markerPoints.push({ name: endName, lat: endCoord.lat, lon: endCoord.lon, type: 'end' })
 
-          if (markerPoints.length < 2) {
+          if (canReusePersisted && segment.points) {
+            partialTracks[index] = {
+              segmentId: segment.id,
+              segmentName: segment.name,
+              points: markerPoints,
+              line: segment.points,
+            }
+            return
+          }
+
+          if (!shouldPlanMissing) {
+            warnings.push(`路段「${segment.name}」暂无缓存轨迹。`)
+            return
+          }
+
+          if (!startCoord && startName) {
+            const resolved = await resolvePointByName(startName)
+            if (resolved) startCoord = resolved
+          }
+          if (!endCoord && endName) {
+            const resolved = await resolvePointByName(endName)
+            if (resolved) endCoord = resolved
+          }
+
+          const planningPoints: Array<{ lat: number; lng: number }> = []
+          if (startCoord) planningPoints.push({ lat: startCoord.lat, lng: startCoord.lon })
+          for (const waypoint of resolvedWaypoints) planningPoints.push({ lat: waypoint.lat, lng: waypoint.lng })
+          if (endCoord) planningPoints.push({ lat: endCoord.lat, lng: endCoord.lon })
+
+          if (planningPoints.length < 2) {
             warnings.push(`路段「${segment.name}」缺少可用起终点坐标，无法规划。`)
             return
           }
 
-          const drivingPoints = markerPoints.map((point) => ({ lat: point.lat, lng: point.lon }))
-          const { route, error } = await planDrivingRoute(drivingPoints, segment.preference)
-
-          let line = fallbackLineFromPoints(markerPoints)
-          if (route?.polyline?.length) {
-            line = route.polyline.map(([lat, lng]) => ({ lat, lon: lng }))
-          } else {
-            const reason = error?.message ?? '未知错误'
-            warnings.push(`路段「${segment.name}」规划失败：${reason}，已降级为直线连接。`)
-          }
+          const routeType = segment.routeType ?? 'DRIVING'
+          const { route, error } =
+            routeType === 'CYCLING'
+              ? await planCyclingRoute(planningPoints)
+              : await planDrivingRoute(planningPoints, segment.preference)
 
           if (!active || runId !== buildRunIdRef.current) return
 
-          pointsForParent[segment.id] = line
+          let line = fallbackLineFromPoints(planningPoints.map((point) => ({ lat: point.lat, lon: point.lng })))
+          if (route?.polyline?.length) {
+            line = route.polyline.map(([lat, lng]) => ({ lat, lon: lng }))
+            patches.push({
+              segmentId: segment.id,
+              points: line,
+              distanceMeters: typeof route.distanceMeters === 'number' ? route.distanceMeters : null,
+              routeBuildKey: buildKey,
+            })
+            void saveSegmentRouteCache({
+              segmentId: segment.id,
+              routeBuildKey: buildKey,
+              points: line,
+            })
+          } else {
+            const reason = error?.message ?? '未知错误'
+            warnings.push(`路段「${segment.name}」规划失败：${reason}。`)
+          }
+
           partialTracks[index] = {
             segmentId: segment.id,
             segmentName: segment.name,
-            points: markerPoints,
+            points: [
+              { name: startName, lat: planningPoints[0].lat, lon: planningPoints[0].lng, type: 'start' },
+              ...resolvedWaypoints.map((waypoint) => ({ name: waypoint.name, lat: waypoint.lat, lon: waypoint.lng, type: 'via' as const })),
+              {
+                name: endName,
+                lat: planningPoints[planningPoints.length - 1].lat,
+                lon: planningPoints[planningPoints.length - 1].lng,
+                type: 'end',
+              },
+            ],
             line,
           }
-
-          const visibleTracks = partialTracks.filter((track): track is SegmentTrack => Boolean(track))
-          setTracks(visibleTracks)
-          onTracksComputed({ ...pointsForParent })
         })(),
       )
 
       await Promise.allSettled(tasks)
       if (!active || runId !== buildRunIdRef.current) return
 
+      const finalTracks = partialTracks.filter((track): track is SegmentTrack => Boolean(track))
+      setTracks(finalTracks)
       setLoading(false)
 
-      const finalTracks = partialTracks.filter((track): track is SegmentTrack => Boolean(track))
+      if (patches.length) {
+        onRouteResolved(patches)
+      }
+
       if (!finalTracks.length) {
-        setMessage('未解析出可展示路线，请检查起点/终点和途经点是否已选择候选。')
+        setMessage('未解析出可展示路线，请检查起终点、途经点或进入更细粒度视图。')
         return
       }
 
-      setMessage(warnings.length ? warnings.join(' ') : '已加载高德路线。')
+      setMessage(warnings.length ? warnings.join(' ') : shouldPlanMissing ? '已加载路线。' : '已展示缓存轨迹。')
     }
 
     void buildTracks()
@@ -291,7 +361,7 @@ function MapPanel({
     return () => {
       active = false
     }
-  }, [segmentsToShow, onTracksComputed, endpointDraft])
+  }, [routeBuildKey, segmentDescriptors, allowAutoBuild, onRouteResolved])
 
   const editingTrack = useMemo(
     () => (editingSegmentId ? tracks.find((track) => track.segmentId === editingSegmentId) ?? null : null),
@@ -350,10 +420,8 @@ function MapPanel({
     return indices
   }, [draftLine, editMode])
 
-  const allLatLng = useMemo(
-    () => displayedTracks.flatMap((track) => toLatLng(track.line)),
-    [displayedTracks],
-  )
+  const allLatLng = useMemo(() => displayedTracks.flatMap((track) => toLatLng(track.line)), [displayedTracks])
+  const mapResizeKey = `${displayedTracks.length}-${editingSegmentId ?? ''}-${loading ? 'loading' : 'idle'}`
 
   const handleCancel = () => {
     if (originalLine) setDraftLine(originalLine.map((point) => ({ ...point })))
@@ -378,46 +446,30 @@ function MapPanel({
 
   return (
     <section className="card-section map-section-with-toolbar">
-      <h2>4) 地图轨迹</h2>
-      {(loading || message) && <p className="hint-text">{loading ? '正在加载轨迹点位...' : message}</p>}
+      {loading && <p className="hint-text">正在加载轨迹点位...</p>}
+      {!loading && message.startsWith('未解析') && <p className="hint-text">{message}</p>}
 
-      <div className="map-toolbar">
-        <button type="button" onClick={() => setMapExpanded((prev) => !prev)}>
-          {mapExpanded ? '收起地图' : '展开地图'}
-        </button>
-
-        {!editingSegmentId ? (
-          <button
-            type="button"
-            onClick={() => {
-              if (filteredSegments[0]) onStartEdit(filteredSegments[0].id)
-            }}
-            disabled={!filteredSegments.length}
-          >
-            编辑轨迹
+      {editingSegmentId && (
+        <div className="map-toolbar">
+          <button type="button" onClick={handleCancel}>
+            取消
           </button>
-        ) : (
-          <>
-            <button type="button" onClick={handleCancel}>
-              取消
+          <button type="button" onClick={handleSave}>
+            保存
+          </button>
+          <div className="edit-mode-tabs">
+            <button type="button" className={editMode === 'start' ? 'active' : ''} onClick={() => setEditMode('start')}>
+              改起点
             </button>
-            <button type="button" onClick={handleSave}>
-              保存
+            <button type="button" className={editMode === 'end' ? 'active' : ''} onClick={() => setEditMode('end')}>
+              改终点
             </button>
-            <div className="edit-mode-tabs">
-              <button type="button" className={editMode === 'start' ? 'active' : ''} onClick={() => setEditMode('start')}>
-                改起点
-              </button>
-              <button type="button" className={editMode === 'end' ? 'active' : ''} onClick={() => setEditMode('end')}>
-                改终点
-              </button>
-              <button type="button" className={editMode === 'track' ? 'active' : ''} onClick={() => setEditMode('track')}>
-                改轨迹
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+            <button type="button" className={editMode === 'track' ? 'active' : ''} onClick={() => setEditMode('track')}>
+              改轨迹
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="map-panel-wrapper">
         <MapContainer
@@ -426,9 +478,9 @@ function MapPanel({
           zoomSnap={0.25}
           zoomDelta={0.25}
           wheelPxPerZoomLevel={160}
-          className={`map-container ${mapExpanded ? 'map-container-expanded' : ''}`}
+          className="map-container"
         >
-          <MapResizeController expanded={mapExpanded} />
+          <MapResizeController watchKey={mapResizeKey} />
           <TileLayer
             attribution='&copy; <a href="https://www.amap.com/">Amap</a>'
             url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"

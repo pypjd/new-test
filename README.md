@@ -13,7 +13,7 @@
 
 1. 打开高德开放平台：<https://lbs.amap.com/>
 2. 创建应用并开通 Web 服务，获取 Key。
-3. 在项目根目录创建 `.env`：
+3. 在项目根目录创建 `.env`（推荐同时使用 `.env.local` 存放本机私密配置）：
 
 ```bash
 cp .env.example .env
@@ -22,10 +22,12 @@ cp .env.example .env
 填入：
 
 ```bash
-AMAP_KEY=你的高德Web服务Key
+AMAP_WEB_API_KEY=你的高德Web服务Key
 ```
 
 > InputTips 与驾车规划都通过后端代理调用，不再在浏览器直接使用高德 key。
+> 后端会按顺序读取：`AMAP_WEB_API_KEY` → `AMAP_WEB_KEY` → `AMAP_KEY`。
+> 环境文件加载顺序：`.env` 后再 `.env.local`，后者可覆盖前者。
 
 ---
 
@@ -33,6 +35,11 @@ AMAP_KEY=你的高德Web服务Key
 
 ```bash
 npm install
+# 启动独立后端（Express）
+npm run dev:backend
+# 另一个终端启动前端
+npm run dev:frontend
+# 或一条命令同时启动
 npm run dev
 ```
 
@@ -124,8 +131,8 @@ Array<{ id?: string; name: string; lat: number; lng: number; amapId?: string }>
 ### 6.1 提示“未配置 key”
 
 请检查：
-- `.env` 是否存在
-- `AMAP_KEY` 是否填写
+- `.env` / `.env.local` 是否存在（后者优先）
+- `AMAP_WEB_API_KEY`（推荐）或兼容名 `AMAP_WEB_KEY` / `AMAP_KEY` 是否填写
 - 修改后是否重启了 `npm run dev`
 
 ### 6.2 接口限流 / 调用失败
@@ -146,4 +153,14 @@ Array<{ id?: string; name: string; lat: number; lng: number; amapId?: string }>
 
 - 前端：最少 2 字符、500ms 防抖、AbortController 取消旧请求、LRU(200)+TTL(10 分钟) 缓存。
 - 后端：`/api/amap/inputtips` 代理高德 `v3/assistant/inputtips`，带参数约束、IP 限流（默认 60 req/min）、10 分钟缓存与失败降级（返回空数据 + reason）。
-- 安全：高德 key 仅放在服务端环境变量 `AMAP_KEY`，不透出到浏览器。
+- 安全：高德 key 仅放在服务端环境变量 `AMAP_WEB_API_KEY`，不透出到浏览器。
+
+
+## 8. 独立后端（Express）
+
+- 新增 `backend/`，提供独立 API 服务：
+  - `GET /api/amap/inputtips`
+  - `GET /api/amap/direction`
+- 后端通过环境变量读取高德 key（优先 `AMAP_WEB_API_KEY`，兼容 `AMAP_WEB_KEY` / `AMAP_KEY`）。
+- 后端启动会显式加载项目根目录与当前工作目录下的 `.env`、`.env.local`，并以 `.env.local` 覆盖 `.env`。
+- Vite 不再内置中间件代理，而是通过 `server.proxy` 转发到 `VITE_BACKEND_BASE_URL`（默认 `http://localhost:3001`）。

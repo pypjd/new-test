@@ -1,6 +1,8 @@
 // 旅程领域类型：统一定义 Trip / TripDay / RouteSegment 以及筛选与汇总类型。
 
-export type RoutePreference = 'HIGHWAY_FIRST' | 'LESS_TOLL' | 'NORMAL_ROAD_FIRST' | 'SHORTEST_TIME' | 'AVOID_TOLL'
+export type RoutePreference = 'HIGHWAY_FIRST' | 'AVOID_TOLL'
+export type RouteType = 'DRIVING' | 'CYCLING'
+export type TripCategory = 'review' | 'plan'
 
 export interface CoordPoint {
   lat: number
@@ -24,13 +26,20 @@ export interface RouteSegment {
   order?: number
   startPoint: string
   endPoint: string
-  viaPointsText: string
+  /**
+   * 历史兼容字段：旧版本以逗号分隔文本记录途经点。
+   * 新增/编辑/规划主流程统一使用 waypoints。
+   */
+  viaPointsText?: string
   preference: RoutePreference
+  routeType?: RouteType
   startCoord?: CoordPoint
   endCoord?: CoordPoint
   startPlaceId?: string
   endPlaceId?: string
   points?: CoordPoint[]
+  distanceMeters?: number
+  routeBuildKey?: string
   waypoints?: Waypoint[]
 }
 
@@ -43,6 +52,7 @@ export interface TripDay {
 export interface Trip {
   id: string
   title: string
+  category: TripCategory
   order?: number
   startDate: string
   endDate: string
@@ -61,5 +71,4 @@ export interface FilterState {
 
 export interface RouteSummary {
   totalDistanceText: string
-  totalDurationText: string
 }
