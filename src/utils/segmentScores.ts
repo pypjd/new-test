@@ -44,58 +44,71 @@ function normalizeScoreRatio(score: number | null | undefined): number {
   return (normalized - SCORE_MIN) / (SCORE_MAX - SCORE_MIN)
 }
 
-function hslToHex(h: number, s: number, l: number): string {
-  const saturation = clamp(s, 0, 100) / 100
-  const lightness = clamp(l, 0, 100) / 100
-  const hue = ((h % 360) + 360) % 360
-  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation
-  const sector = hue / 60
-  const x = chroma * (1 - Math.abs((sector % 2) - 1))
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const normalized = hex.replace('#', '')
+  const safeHex = normalized.length === 3
+    ? normalized.split('').map((char) => `${char}${char}`).join('')
+    : normalized
 
-  let red = 0
-  let green = 0
-  let blue = 0
+  return {
+    r: Number.parseInt(safeHex.slice(0, 2), 16),
+    g: Number.parseInt(safeHex.slice(2, 4), 16),
+    b: Number.parseInt(safeHex.slice(4, 6), 16),
+  }
+}
 
-  if (sector >= 0 && sector < 1) {
-    red = chroma
-    green = x
-  } else if (sector < 2) {
-    red = x
-    green = chroma
-  } else if (sector < 3) {
-    green = chroma
-    blue = x
-  } else if (sector < 4) {
-    green = x
-    blue = chroma
-  } else if (sector < 5) {
-    red = x
-    blue = chroma
-  } else {
-    red = chroma
-    blue = x
+function rgbToHex(r: number, g: number, b: number): string {
+  const toHex = (value: number) => Math.round(clamp(value, 0, 255)).toString(16).padStart(2, '0')
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`
+}
+
+function interpolateHexColor(startHex: string, endHex: string, ratio: number): string {
+  const start = hexToRgb(startHex)
+  const end = hexToRgb(endHex)
+  return rgbToHex(
+    start.r + (end.r - start.r) * ratio,
+    start.g + (end.g - start.g) * ratio,
+    start.b + (end.b - start.b) * ratio,
+  )
+}
+
+function colorFromAnchors(ratio: number, anchors: Array<{ at: number; color: string }>): string {
+  if (ratio <= anchors[0].at) return anchors[0].color
+
+  for (let index = 1; index < anchors.length; index += 1) {
+    const previous = anchors[index - 1]
+    const current = anchors[index]
+    if (ratio <= current.at) {
+      const localRatio = (ratio - previous.at) / Math.max(current.at - previous.at, Number.EPSILON)
+      return interpolateHexColor(previous.color, current.color, localRatio)
+    }
   }
 
-  const match = lightness - chroma / 2
-  const toHex = (channel: number) => Math.round((channel + match) * 255).toString(16).padStart(2, '0')
-
-  return `#${toHex(red)}${toHex(green)}${toHex(blue)}`
+  return anchors[anchors.length - 1].color
 }
 
 export function scoreToColor(score: number | null | undefined, mode: Exclude<RouteColorMode, 'default'>): string {
   const ratio = normalizeScoreRatio(score)
 
   if (mode === 'scenic') {
-    const hue = 215 - ratio * 55
-    const saturation = 8 + ratio * 62
-    const lightness = 88 - ratio * 36
-    return hslToHex(hue, saturation, lightness)
+    return colorFromAnchors(ratio, [
+      { at: 0, color: '#334e68' },
+      { at: 0.24, color: '#1d5f8c' },
+      { at: 0.5, color: '#0077b6' },
+      { at: 0.74, color: '#00a8b5' },
+      { at: 1, color: '#10b981' },
+    ])
   }
 
-  const hue = 130 - ratio * 130
-  const saturation = 50 + ratio * 38
-  const lightness = 44 + (1 - ratio) * 10
-  return hslToHex(hue, saturation, lightness)
+  return colorFromAnchors(ratio, [
+    { at: 0, color: '#1f9d55' },
+    { at: 0.35, color: '#84cc16' },
+    { at: 0.6, color: '#f59e0b' },
+    { at: 0.78, color: '#f97316' },
+    { at: 0.86, color: '#ef4444' },
+    { at: 0.93, color: '#c81e1e' },
+    { at: 1, color: '#7f1d1d' },
+  ])
 }
 
 export function getSegmentScore(segment: RouteSegment, mode: Exclude<RouteColorMode, 'default'>): number | null {

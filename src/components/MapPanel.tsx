@@ -11,6 +11,7 @@ import { buildSegmentRouteKey } from '../utils/routeBuildKey'
 import {
   getScoreGradient,
   getSegmentDisplayColor,
+  getSegmentScore,
   UNRATED_SEGMENT_COLOR,
 } from '../utils/segmentScores'
 
@@ -523,13 +524,17 @@ function MapPanel({
                   const lineColor = sourceSegment
                     ? getSegmentDisplayColor(sourceSegment, routeColorMode, '#2563eb')
                     : '#2563eb'
+                  const modeScore =
+                    routeColorMode === 'default' || !sourceSegment
+                      ? 'default'
+                      : getSegmentScore(sourceSegment, routeColorMode) ?? 'unrated'
+                  const lineWeight = routeColorMode === 'default' ? 4 : 6
 
                   return (
                     <Polyline
-                      key={track.segmentId}
+                      key={`${track.segmentId}-${routeColorMode}-${modeScore}`}
                       positions={toLatLng(track.line)}
-                      color={lineColor}
-                      weight={4}
+                      pathOptions={{ color: lineColor, weight: lineWeight, opacity: 0.96 }}
                     />
                   )
                 })()
