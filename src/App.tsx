@@ -41,6 +41,7 @@ function App() {
   )
 
   const isAllTripsSelected = !filters.tripId
+  const canUseScoreColoring = !isAllTripsSelected
   const placeholderMode: 'trip-list' | 'segment-list' = isAllTripsSelected ? 'trip-list' : 'segment-list'
   const mapRenderSegments = useFilteredSegments(workspaceTrips, filters)
   const listViewSegments = placeholderMode === 'segment-list' ? mapRenderSegments : []
@@ -149,6 +150,11 @@ function App() {
     setEndpointDraft(null)
     setSegmentMetaDraft(null)
   }, [activeWorkspace, workspaceTrips, isReadonlyDemoMode])
+
+  useEffect(() => {
+    if (canUseScoreColoring || routeColorMode === 'default') return
+    setRouteColorMode('default')
+  }, [canUseScoreColoring, routeColorMode])
 
   const selectedTrip = useMemo(
     () => workspaceTrips.find((trip) => trip.id === filters.tripId) ?? null,
@@ -424,6 +430,7 @@ function App() {
             onChange={setFilters}
             routeColorMode={routeColorMode}
             onChangeRouteColorMode={setRouteColorMode}
+            canUseScoreColoring={canUseScoreColoring}
             onOpenTripManager={() => setTripManagerOpen(true)}
             isReadonlyMode={isReadonlyDemoMode}
             tripDistanceText={tripDistanceText}

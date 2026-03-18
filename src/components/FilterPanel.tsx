@@ -7,6 +7,7 @@ interface FilterPanelProps {
   onChange: (next: FilterState) => void
   routeColorMode: RouteColorMode
   onChangeRouteColorMode: (mode: RouteColorMode) => void
+  canUseScoreColoring: boolean
   onOpenTripManager: () => void
   isReadonlyMode: boolean
   dayDistanceText: string
@@ -20,6 +21,7 @@ function FilterPanel({
   onChange,
   routeColorMode,
   onChangeRouteColorMode,
+  canUseScoreColoring,
   onOpenTripManager,
   isReadonlyMode,
   dayDistanceText,
@@ -120,6 +122,7 @@ function FilterPanel({
               type="radio"
               name="route-color-mode"
               checked={routeColorMode === 'scenic'}
+              disabled={!canUseScoreColoring}
               onChange={() => onChangeRouteColorMode('scenic')}
             />
             风景评分可视化
@@ -129,12 +132,17 @@ function FilterPanel({
               type="radio"
               name="route-color-mode"
               checked={routeColorMode === 'difficulty'}
+              disabled={!canUseScoreColoring}
               onChange={() => onChangeRouteColorMode('difficulty')}
             />
             难度评分可视化
           </label>
         </div>
-        <p className="hint-text filter-hint">评分着色模式互斥，同一时间最多开启一种可视化。</p>
+        <p className="hint-text filter-hint">
+          {canUseScoreColoring
+            ? '评分着色模式互斥，同一时间最多开启一种可视化。'
+            : '评分着色仅在选中具体旅程时可用；“全部旅程”会混合多次记录，已自动关闭评分着色。'}
+        </p>
       </div>
     </section>
   )
